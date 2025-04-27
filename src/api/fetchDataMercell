@@ -1,0 +1,23 @@
+// fetchData.js
+// import axios from "axios";
+
+// const fetchData = async (fromDate, toDate) => {
+//   try {
+//     const response = await axios.get("https://api.mercell.com/data-endpoint", {
+//       params: {
+//         from: fromDate,
+//         to: toDate,
+//       },
+//       headers: {
+//         "X-Fara-ApiKey": "your-api-key", // Укажите ваш API ключ
+//         Accept: "application/json",
+//       },
+//     });
+//     return response.data;
+//   } catch (error) {
+//     console.error("Ошибка при запросе к API:", error);
+//     return [];
+//   }
+// };
+
+// export default fetchData;
