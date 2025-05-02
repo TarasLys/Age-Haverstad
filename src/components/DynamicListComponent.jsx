@@ -1,7 +1,6 @@
+import React, { useState } from "react";
 
- import React, { useState } from "react";
-
-// Universell funksjon for å hente ut tekst fra streng, objekt med #text eller array av slike objekter
+// Универсальная функция для извлечения текста
 function extractText(val) {
   if (!val) return "";
   if (typeof val === "string") return val;
@@ -17,35 +16,47 @@ const DynamicListComponent = ({ setLocations }) => {
   const [pendingFromDate, setPendingFromDate] = useState("");
   const [pendingToDate, setPendingToDate] = useState("");
   const [loading, setLoading] = useState(false);
+  const [useScraping, setUseScraping] = useState(false);
+  const [useDoffinScraping, setUseDoffinScraping] = useState(false);
 
-  // Laster data fra backend-script (alle felter fra JSON og XML er allerede inne)
+  // Загрузка данных с бэкенда
   const handleLoad = async () => {
     if (!fromDate || !toDate) return;
     setLoading(true);
     try {
-      const response = await fetch("http://localhost:4001/api/notices/with-xml", {
+      let url, body;
+      if (useDoffinScraping) {
+        url = "http://localhost:4003/api/notices/doffin-scrape";
+        body = JSON.stringify({ from: fromDate, to: toDate });
+      } else if (useScraping) {
+        url = "http://localhost:4002/api/notices/scrape-site";
+        body = JSON.stringify({ from: fromDate, to: toDate });
+      } else {
+        url = "http://localhost:4001/api/notices/with-xml";
+        body = JSON.stringify({ from: fromDate, to: toDate });
+      }
+      const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from: fromDate, to: toDate })
+        body,
       });
       const data = await response.json();
       setNotices(data.results || []);
 
-      // Lager locations for kartet (region, land)
+      // Формируем locations для карты
       const locations = (data.results || []).map((notice) => ({
-        name: extractText(notice["notice-title"]?.eng) || "Ukjent",
+        name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
         nutsCode: notice.nutsCode || "Ingen data",
         country: notice.country || "Ingen data",
       }));
       setLocations(locations);
     } catch (e) {
-      console.error("Feil ved lasting av data:", e);
+      console.error("Ошибка при загрузке данных:", e);
       setNotices([]);
     }
     setLoading(false);
   };
 
-  // Logger notices ved hver render
   React.useEffect(() => {
     console.log("notices (state):", notices);
   }, [notices]);
@@ -59,7 +70,39 @@ const DynamicListComponent = ({ setLocations }) => {
       }}
     >
       <h2>Anbud</h2>
-      <div style={{ marginBottom: "20px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+      <div
+        style={{
+          marginBottom: "20px",
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          flexWrap: "wrap",
+        }}
+      >
+        <label>
+          <input
+            type="checkbox"
+            checked={useScraping}
+            onChange={() => {
+              setUseScraping((v) => !v);
+              if (useDoffinScraping) setUseDoffinScraping(false);
+            }}
+            style={{ marginRight: "8px" }}
+          />
+          Использовать скрапинг сайта TED
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={useDoffinScraping}
+            onChange={() => {
+              setUseDoffinScraping((v) => !v);
+              if (useScraping) setUseScraping(false);
+            }}
+            style={{ marginRight: "8px" }}
+          />
+          Использовать базу Doffin
+        </label>
         <label htmlFor="fromDate">Fra dato:</label>
         <input
           id="fromDate"
@@ -120,7 +163,6 @@ const DynamicListComponent = ({ setLocations }) => {
                 background: "#fff",
                 boxShadow: "0 2px 8px rgba(25, 118, 210, 0.04)",
                 padding: "18px 22px",
-                minWidth: 0,
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "space-between",
@@ -130,49 +172,57 @@ const DynamicListComponent = ({ setLocations }) => {
               }}
             >
               <p>
-                <strong>Tittel:</strong> {extractText(notice["notice-title"]?.eng) || "Ukjent"}
+                <strong>Tittel:</strong> {notice.title || "Ukjent"}
               </p>
-              <p>
-                <strong>Beskrivelse:</strong>{" "}
-                {extractText(notice["description-lot"]?.eng) || "Ingen data"}
-              </p>
-              <p>
-                <strong>Publiseringsdato:</strong> {notice["publication-date"] || "Ingen data"}
-              </p>
-              <p>
-                <strong>Region (NUTS):</strong> {notice.nutsCode || "Ingen data"}
-              </p>
-              <p>
-                <strong>Land:</strong> {notice.country || "Ingen data"}
-              </p>
-              <p>
-                <strong>CPV-koder:</strong>{" "}
-                {Array.isArray(notice.cpvCodes)
-                  ? notice.cpvCodes.join(", ")
-                  : notice.cpvCodes || "Ingen data"}
-              </p>
-              <p>
-                <strong>Arbeidstype:</strong>{" "}
-                {extractText(notice["description-lot"]?.eng) || "Ingen data"}
-              </p>
-              <p>
-                <strong>Oppdragsgiver:</strong>{" "}
-                {extractText(notice.customer?.name) || "Ingen data"}
-                {notice.customer?.address && (
-                  <> — {extractText(notice.customer.address)}, {extractText(notice.customer.city)}</>
-                )}
-              </p>
-              <p>
-                <strong>Leverandør:</strong>{" "}
-                {extractText(notice.provider?.name) || "Ingen data"}
-                {notice.provider?.address && (
-                  <> — {extractText(notice.provider.address)}, {extractText(notice.provider.city)}</>
-                )}
-              </p>
-              {notice?.links?.xml?.MUL && (
+              {notice.buyer && (
                 <p>
-                  <a href={notice.links.xml.MUL} target="_blank" rel="noopener noreferrer">
-                    XML
+                  <strong>Oppdragsgiver:</strong> {notice.buyer}
+                </p>
+              )}
+              {notice.typeAnnouncement && (
+                <p>
+                  <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+                </p>
+              )}
+              {notice.announcementSubtype && (
+                <p>
+                  <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+                </p>
+              )}
+              {notice.description && (
+                <p>
+                  <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+                </p>
+              )}
+              {notice.location && (
+                <p>
+                  <strong>Sted:</strong> {notice.location}
+                </p>
+              )}
+              {notice.estValue && (
+                <p>
+                  <strong>Estimert verdi:</strong> {notice.estValue}
+                </p>
+              )}
+              {notice.publicationDate && (
+                <p>
+                  <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+                </p>
+              )}
+              {notice.deadline && (
+                <p>
+                  <strong>Frist:</strong> {notice.deadline}
+                </p>
+              )}
+              {notice.eoes && (
+                <p>
+                  <strong>EØS:</strong> {notice.eoes}
+                </p>
+              )}
+              {notice.link && (
+                <p>
+                  <a href={notice.link} target="_blank" rel="noopener noreferrer">
+                    Peréyti k uvedomleniyu
                   </a>
                 </p>
               )}
@@ -185,6 +235,1708 @@ const DynamicListComponent = ({ setLocations }) => {
 };
 
 export default DynamicListComponent;
+
+
+
+// import React, { useState } from "react";
+
+// // Универсальная функция для извлечения текста
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = ({ setLocations }) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+
+//   // Загрузка данных с бэкенда
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = "http://localhost:4001/api/notices/with-xml";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body,
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Формируем locations для карты
+//       const locations = (data.results || []).map((notice) => ({
+//         name:
+//           extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data",
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Ошибка при загрузке данных:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   React.useEffect(() => {
+//     console.log("notices (state):", notices);
+//   }, [notices]);
+
+//   return (
+//     <div
+//       style={{
+//         padding: "20px",
+//         background: "#f7f9fa",
+//         minHeight: "100vh",
+//       }}
+//     >
+//       <h2>Anbud</h2>
+//       <div
+//         style={{
+//           marginBottom: "20px",
+//           display: "flex",
+//           alignItems: "center",
+//           gap: "10px",
+//           flexWrap: "wrap",
+//         }}
+//       >
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useScraping}
+//             onChange={() => {
+//               setUseScraping((v) => !v);
+//               if (useDoffinScraping) setUseDoffinScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать скрапинг сайта TED
+//         </label>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useDoffinScraping}
+//             onChange={() => {
+//               setUseDoffinScraping((v) => !v);
+//               if (useScraping) setUseScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать базу Doffin
+//         </label>
+//         <label htmlFor="fromDate">Fra dato:</label>
+//         <input
+//           id="fromDate"
+//           type="date"
+//           value={pendingFromDate}
+//           onChange={(e) => setPendingFromDate(e.target.value)}
+//           onBlur={() => setFromDate(pendingFromDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <label htmlFor="toDate">Til dato:</label>
+//         <input
+//           id="toDate"
+//           type="date"
+//           value={pendingToDate}
+//           onChange={(e) => setPendingToDate(e.target.value)}
+//           onBlur={() => setToDate(pendingToDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <button
+//           style={{
+//             marginLeft: "20px",
+//             padding: "8px 18px",
+//             background: "#1976d2",
+//             color: "#fff",
+//             border: "none",
+//             borderRadius: "5px",
+//             cursor: loading ? "not-allowed" : "pointer",
+//             fontWeight: "bold",
+//             fontSize: "16px",
+//             boxShadow: "0 2px 8px rgba(25, 118, 210, 0.08)",
+//             transition: "background 0.2s",
+//           }}
+//           onClick={handleLoad}
+//           disabled={loading || !fromDate || !toDate}
+//         >
+//           Last inn
+//         </button>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div
+//           style={{
+//             display: "grid",
+//             gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//             gap: "24px",
+//             width: "100%",
+//           }}
+//         >
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: "#fff",
+//                 boxShadow: "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//               }}
+//             >
+//               <p>
+//                 <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//               </p>
+//               {notice.buyer && (
+//                 <p>
+//                   <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                 </p>
+//               )}
+//               {notice.typeAnnouncement && (
+//                 <p>
+//                   <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+//                 </p>
+//               )}
+//               {notice.announcementSubtype && (
+//                 <p>
+//                   <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+//                 </p>
+//               )}
+//               {notice.description && (
+//                 <p>
+//                   <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.location && (
+//                 <p>
+//                   <strong>Sted:</strong> {notice.location}
+//                 </p>
+//               )}
+//               {notice.estValue && (
+//                 <p>
+//                   <strong>Estimert verdi:</strong> {notice.estValue}
+//                 </p>
+//               )}
+//               {notice.publicationDate && (
+//                 <p>
+//                   <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.deadline && (
+//                 <p>
+//                   <strong>Frist:</strong> {notice.deadline}
+//                 </p>
+//               )}
+//               {notice.eoes && (
+//                 <p>
+//                   <strong>EØS:</strong> {notice.eoes}
+//                 </p>
+//               )}
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     Peréyti k uvedomleniyu
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
+
+// export default DynamicListComponent;
+
+
+
+// import React, { useState } from "react";
+
+// // Универсальная функция для извлечения текста
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = ({ setLocations }) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+
+//   // Загрузка данных с бэкенда
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = "http://localhost:4001/api/notices/with-xml";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body,
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Формируем locations для карты
+//       const locations = (data.results || []).map((notice) => ({
+//         name:
+//           extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data",
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Ошибка при загрузке данных:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   React.useEffect(() => {
+//     console.log("notices (state):", notices);
+//   }, [notices]);
+
+//   return (
+//     <div
+//       style={{
+//         padding: "20px",
+//         background: "#f7f9fa",
+//         minHeight: "100vh",
+//       }}
+//     >
+//       <h2>Anbud</h2>
+//       <div
+//         style={{
+//           marginBottom: "20px",
+//           display: "flex",
+//           alignItems: "center",
+//           gap: "10px",
+//           flexWrap: "wrap",
+//         }}
+//       >
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useScraping}
+//             onChange={() => {
+//               setUseScraping((v) => !v);
+//               if (useDoffinScraping) setUseDoffinScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать скрапинг сайта TED
+//         </label>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useDoffinScraping}
+//             onChange={() => {
+//               setUseDoffinScraping((v) => !v);
+//               if (useScraping) setUseScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать базу Doffin
+//         </label>
+//         <label htmlFor="fromDate">Fra dato:</label>
+//         <input
+//           id="fromDate"
+//           type="date"
+//           value={pendingFromDate}
+//           onChange={(e) => setPendingFromDate(e.target.value)}
+//           onBlur={() => setFromDate(pendingFromDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <label htmlFor="toDate">Til dato:</label>
+//         <input
+//           id="toDate"
+//           type="date"
+//           value={pendingToDate}
+//           onChange={(e) => setPendingToDate(e.target.value)}
+//           onBlur={() => setToDate(pendingToDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <button
+//           style={{
+//             marginLeft: "20px",
+//             padding: "8px 18px",
+//             background: "#1976d2",
+//             color: "#fff",
+//             border: "none",
+//             borderRadius: "5px",
+//             cursor: loading ? "not-allowed" : "pointer",
+//             fontWeight: "bold",
+//             fontSize: "16px",
+//             boxShadow: "0 2px 8px rgba(25, 118, 210, 0.08)",
+//             transition: "background 0.2s",
+//           }}
+//           onClick={handleLoad}
+//           disabled={loading || !fromDate || !toDate}
+//         >
+//           Last inn
+//         </button>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div
+//           style={{
+//             display: "grid",
+//             gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//             gap: "24px",
+//             width: "100%",
+//           }}
+//         >
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: "#fff",
+//                 boxShadow: "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//               }}
+//             >
+//               <p>
+//                 <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//               </p>
+//               {notice.buyer && (
+//                 <p>
+//                   <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                 </p>
+//               )}
+//               {notice.typeAnnouncement && (
+//                 <p>
+//                   <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+//                 </p>
+//               )}
+//               {notice.announcementSubtype && (
+//                 <p>
+//                   <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+//                 </p>
+//               )}
+//               {notice.description && (
+//                 <p>
+//                   <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.location && (
+//                 <p>
+//                   <strong>Sted:</strong> {notice.location}
+//                 </p>
+//               )}
+//               {notice.estValue && (
+//                 <p>
+//                   <strong>Estimert verdi:</strong> {notice.estValue}
+//                 </p>
+//               )}
+//               {notice.publicationDate && (
+//                 <p>
+//                   <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.deadline && (
+//                 <p>
+//                   <strong>Frist:</strong> {notice.deadline}
+//                 </p>
+//               )}
+//               {notice.eoes && (
+//                 <p>
+//                   <strong>EØS:</strong> {notice.eoes}
+//                 </p>
+//               )}
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     Peréyti k uvedomleniyu
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
+
+// export default DynamicListComponent;
+
+
+
+// import React, { useState } from "react";
+
+// // Универсальная функция для извлечения текста
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = ({ setLocations }) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+
+//   // Загрузка данных с бэкенда
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = "http://localhost:4001/api/notices/with-xml";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body,
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Формируем locations для карты
+//       const locations = (data.results || []).map((notice) => ({
+//         name:
+//           extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data",
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Ошибка при загрузке данных:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   React.useEffect(() => {
+//     console.log("notices (state):", notices);
+//   }, [notices]);
+
+//   return (
+//     <div
+//       style={{
+//         padding: "20px",
+//         background: "#f7f9fa",
+//         minHeight: "100vh",
+//       }}
+//     >
+//       <h2>Anbud</h2>
+//       <div
+//         style={{
+//           marginBottom: "20px",
+//           display: "flex",
+//           alignItems: "center",
+//           gap: "10px",
+//           flexWrap: "wrap",
+//         }}
+//       >
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useScraping}
+//             onChange={() => {
+//               setUseScraping((v) => !v);
+//               if (useDoffinScraping) setUseDoffinScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать скрапинг сайта TED
+//         </label>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useDoffinScraping}
+//             onChange={() => {
+//               setUseDoffinScraping((v) => !v);
+//               if (useScraping) setUseScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать базу Doffin
+//         </label>
+//         <label htmlFor="fromDate">Fra dato:</label>
+//         <input
+//           id="fromDate"
+//           type="date"
+//           value={pendingFromDate}
+//           onChange={(e) => setPendingFromDate(e.target.value)}
+//           onBlur={() => setFromDate(pendingFromDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <label htmlFor="toDate">Til dato:</label>
+//         <input
+//           id="toDate"
+//           type="date"
+//           value={pendingToDate}
+//           onChange={(e) => setPendingToDate(e.target.value)}
+//           onBlur={() => setToDate(pendingToDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <button
+//           style={{
+//             marginLeft: "20px",
+//             padding: "8px 18px",
+//             background: "#1976d2",
+//             color: "#fff",
+//             border: "none",
+//             borderRadius: "5px",
+//             cursor: loading ? "not-allowed" : "pointer",
+//             fontWeight: "bold",
+//             fontSize: "16px",
+//             boxShadow: "0 2px 8px rgba(25, 118, 210, 0.08)",
+//             transition: "background 0.2s",
+//           }}
+//           onClick={handleLoad}
+//           disabled={loading || !fromDate || !toDate}
+//         >
+//           Last inn
+//         </button>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div
+//           style={{
+//             display: "grid",
+//             gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//             gap: "24px",
+//             width: "100%",
+//           }}
+//         >
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: "#fff",
+//                 boxShadow: "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//               }}
+//             >
+//               <p>
+//                 <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//               </p>
+//               {notice.buyer && (
+//                 <p>
+//                   <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                 </p>
+//               )}
+//               {notice.announcementType && (
+//                 <p>
+//                   <strong>Type kunngjøring:</strong> {notice.announcementType}
+//                 </p>
+//               )}
+//               {notice.description && (
+//                 <p>
+//                   <strong>Beskrivelse:</strong>{" "}
+//                   {notice.description || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.location && (
+//                 <p>
+//                   <strong>Sted:</strong> {notice.location}
+//                 </p>
+//               )}
+//               {notice.estValue && (
+//                 <p>
+//                   <strong>Estimert verdi:</strong> {notice.estValue}
+//                 </p>
+//               )}
+//               {notice.publicationDate && (
+//                 <p>
+//                   <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     Per\u00E9yti k uvedomleniyu
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
+
+// export default DynamicListComponent;
+
+
+
+// РАБОЧИЙ ФАЙЛ С ПАГИНАЦИЕЙ И ПО РЕГИОНУ// import React, { useState } from "react";
+
+// // Универсальная функция для извлечения текста
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = ({ setLocations }) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+
+//   // Загрузка данных с бэкенда
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = "http://localhost:4001/api/notices/with-xml";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body,
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Формируем locations для карты
+//       const locations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data",
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Ошибка при загрузке данных:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   React.useEffect(() => {
+//     console.log("notices (state):", notices);
+//   }, [notices]);
+
+//   return (
+//     <div
+//       style={{
+//         padding: "20px",
+//         background: "#f7f9fa",
+//         minHeight: "100vh",
+//       }}
+//     >
+//       <h2>Anbud</h2>
+//       <div style={{ marginBottom: "20px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useScraping}
+//             onChange={() => {
+//               setUseScraping((v) => !v);
+//               if (useDoffinScraping) setUseDoffinScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать скрапинг сайта TED
+//         </label>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useDoffinScraping}
+//             onChange={() => {
+//               setUseDoffinScraping((v) => !v);
+//               if (useScraping) setUseScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать базу Doffin
+//         </label>
+//         <label htmlFor="fromDate">Fra dato:</label>
+//         <input
+//           id="fromDate"
+//           type="date"
+//           value={pendingFromDate}
+//           onChange={(e) => setPendingFromDate(e.target.value)}
+//           onBlur={() => setFromDate(pendingFromDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <label htmlFor="toDate">Til dato:</label>
+//         <input
+//           id="toDate"
+//           type="date"
+//           value={pendingToDate}
+//           onChange={(e) => setPendingToDate(e.target.value)}
+//           onBlur={() => setToDate(pendingToDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <button
+//           style={{
+//             marginLeft: "20px",
+//             padding: "8px 18px",
+//             background: "#1976d2",
+//             color: "#fff",
+//             border: "none",
+//             borderRadius: "5px",
+//             cursor: loading ? "not-allowed" : "pointer",
+//             fontWeight: "bold",
+//             fontSize: "16px",
+//             boxShadow: "0 2px 8px rgba(25, 118, 210, 0.08)",
+//             transition: "background 0.2s",
+//           }}
+//           onClick={handleLoad}
+//           disabled={loading || !fromDate || !toDate}
+//         >
+//           Last inn
+//         </button>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div
+//           style={{
+//             display: "grid",
+//             gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//             gap: "24px",
+//             width: "100%",
+//           }}
+//         >
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: "#fff",
+//                 boxShadow: "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 minWidth: 0,
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//               }}
+//             >
+//               <p>
+//                 <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//               </p>
+//               {notice.description && (
+//                 <p>
+//                   <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.publicationDate && (
+//                 <p>
+//                   <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.noticeId && (
+//                 <p>
+//                   <strong>ID уведомления:</strong> {notice.noticeId || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     Перейти к уведомлению
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
+
+// export default DynamicListComponent;
+
+
+
+// import React, { useState } from "react";
+
+// // Универсальная функция для извлечения текста
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = ({ setLocations }) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false); // Новый стейт
+
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape"; // URL для базы Doffin
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = "http://localhost:4001/api/notices/with-xml";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body,
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Формируем locations для карты
+//       const locations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data",
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Ошибка при загрузке данных:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   React.useEffect(() => {
+//     console.log("notices (state):", notices);
+//   }, [notices]);
+
+//   return (
+//     <div
+//       style={{
+//         padding: "20px",
+//         background: "#f7f9fa",
+//         minHeight: "100vh",
+//       }}
+//     >
+//       <h2>Anbud</h2>
+//       <div style={{ marginBottom: "20px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useScraping}
+//             onChange={() => {
+//               setUseScraping((v) => !v);
+//               if (useDoffinScraping) setUseDoffinScraping(false); // Убрать выбор базы Doffin
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать скрапинг сайта TED
+//         </label>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useDoffinScraping}
+//             onChange={() => {
+//               setUseDoffinScraping((v) => !v);
+//               if (useScraping) setUseScraping(false); // Убрать выбор TED
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать базу Doffin
+//         </label>
+//         <label htmlFor="fromDate">Fra dato:</label>
+//         <input
+//           id="fromDate"
+//           type="date"
+//           value={pendingFromDate}
+//           onChange={(e) => setPendingFromDate(e.target.value)}
+//           onBlur={() => setFromDate(pendingFromDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <label htmlFor="toDate">Til dato:</label>
+//         <input
+//           id="toDate"
+//           type="date"
+//           value={pendingToDate}
+//           onChange={(e) => setPendingToDate(e.target.value)}
+//           onBlur={() => setToDate(pendingToDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <button
+//           style={{
+//             marginLeft: "20px",
+//             padding: "8px 18px",
+//             background: "#1976d2",
+//             color: "#fff",
+//             border: "none",
+//             borderRadius: "5px",
+//             cursor: loading ? "not-allowed" : "pointer",
+//             fontWeight: "bold",
+//             fontSize: "16px",
+//             boxShadow: "0 2px 8px rgba(25, 118, 210, 0.08)",
+//             transition: "background 0.2s",
+//           }}
+//           onClick={handleLoad}
+//           disabled={loading || !fromDate || !toDate}
+//         >
+//           Last inn
+//         </button>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div
+//           style={{
+//             display: "grid",
+//             gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//             gap: "24px",
+//             width: "100%",
+//           }}
+//         >
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: "#fff",
+//                 boxShadow: "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 minWidth: 0,
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//               }}
+//             >
+//               {/* Уведомления (настройка отображения) */}
+//               <p>
+//                 <strong>Tittel:</strong>{" "}
+//                 {extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent"}
+//               </p>
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     Перейти
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
+
+// export default DynamicListComponent;
+
+
+
+// import React, { useState } from "react";
+
+// // Универсальная функция для извлечения текста из строки, объекта с #text или массива таких объектов
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = ({ setLocations }) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false); // Новый стейт для переключателя
+
+//   // Загрузка данных с бэкенда (API или скрапинг)
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = "http://localhost:4001/api/notices/with-xml";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Формируем locations для карты (регион, страна)
+//       const locations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data",
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Feil ved lasting av data:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   // Логируем notices при каждом изменении
+//   React.useEffect(() => {
+//     console.log("notices (state):", notices);
+//   }, [notices]);
+
+//   return (
+//     <div
+//       style={{
+//         padding: "20px",
+//         background: "#f7f9fa",
+//         minHeight: "100vh",
+//       }}
+//     >
+//       <h2>Anbud</h2>
+//       <div style={{ marginBottom: "20px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useScraping}
+//             onChange={() => setUseScraping((v) => !v)}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать скрапинг сайта TED
+//         </label>
+//         <label htmlFor="fromDate">Fra dato:</label>
+//         <input
+//           id="fromDate"
+//           type="date"
+//           value={pendingFromDate}
+//           onChange={(e) => setPendingFromDate(e.target.value)}
+//           onBlur={() => setFromDate(pendingFromDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <label htmlFor="toDate">Til dato:</label>
+//         <input
+//           id="toDate"
+//           type="date"
+//           value={pendingToDate}
+//           onChange={(e) => setPendingToDate(e.target.value)}
+//           onBlur={() => setToDate(pendingToDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <button
+//           style={{
+//             marginLeft: "20px",
+//             padding: "8px 18px",
+//             background: "#1976d2",
+//             color: "#fff",
+//             border: "none",
+//             borderRadius: "5px",
+//             cursor: loading ? "not-allowed" : "pointer",
+//             fontWeight: "bold",
+//             fontSize: "16px",
+//             boxShadow: "0 2px 8px rgba(25, 118, 210, 0.08)",
+//             transition: "background 0.2s",
+//           }}
+//           onClick={handleLoad}
+//           disabled={loading || !fromDate || !toDate}
+//         >
+//           Last inn
+//         </button>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div
+//           style={{
+//             display: "grid",
+//             gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//             gap: "24px",
+//             width: "100%",
+//           }}
+//         >
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: "#fff",
+//                 boxShadow: "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 minWidth: 0,
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//               }}
+//             >
+//               <p>
+//                 <strong>Номер уведомления:</strong>{" "}
+//                 {notice.noticeId || notice.noticeID || notice.notice_id || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Tittel:</strong>{" "}
+//                 {extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent"}
+//               </p>
+//               <p>
+//                 <strong>Beskrivelse:</strong>{" "}
+//                 {extractText(notice["description-lot"]?.eng || notice.description) || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Publiseringsdato:</strong>{" "}
+//                 {notice["publication-date"] || notice.publicationDate || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Region (NUTS):</strong> {notice.nutsCode || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Land:</strong> {notice.country || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>CPV-koder:</strong>{" "}
+//                 {Array.isArray(notice.cpvCodes)
+//                   ? notice.cpvCodes.join(", ")
+//                   : Array.isArray(notice.cpv_codes)
+//                   ? notice.cpv_codes.join(", ")
+//                   : notice.cpvCodes || notice.cpv_codes || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Arbeidstype:</strong>{" "}
+//                 {extractText(notice["description-lot"]?.eng || notice.description) || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Oppdragsgiver:</strong>{" "}
+//                 {extractText(notice.customer?.name) || notice.buyer || "Ingen data"}
+//                 {notice.customer?.address && (
+//                   <> — {extractText(notice.customer.address)}, {extractText(notice.customer.city)}</>
+//                 )}
+//               </p>
+//               <p>
+//                 <strong>Leverandør:</strong>{" "}
+//                 {extractText(notice.provider?.name) || notice.provider || "Ingen data"}
+//                 {notice.provider?.address && (
+//                   <> — {extractText(notice.provider.address)}, {extractText(notice.provider.city)}</>
+//                 )}
+//               </p>
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     TED
+//                   </a>
+//                 </p>
+//               )}
+//               {notice?.links?.xml?.MUL && (
+//                 <p>
+//                   <a href={notice.links.xml.MUL} target="_blank" rel="noopener noreferrer">
+//                     XML
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
+
+// export default DynamicListComponent;
+
+
+//РАБОЧИЙ С API// import React, { useState } from "react";
+
+// // Универсальная функция для извлечения текста из строки, объекта с #text или массива таких объектов
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = ({ setLocations }) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+
+//   // Загрузка данных с бэкенда (все поля из JSON и XML уже включены)
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       const response = await fetch("http://localhost:4001/api/notices/with-xml", {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body: JSON.stringify({ from: fromDate, to: toDate })
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Формируем locations для карты (регион, страна)
+//       const locations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng) || "Ukjent",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data",
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Feil ved lasting av data:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   // Логируем notices при каждом изменении
+//   React.useEffect(() => {
+//     console.log("notices (state):", notices);
+//   }, [notices]);
+
+//   return (
+//     <div
+//       style={{
+//         padding: "20px",
+//         background: "#f7f9fa",
+//         minHeight: "100vh",
+//       }}
+//     >
+//       <h2>Anbud</h2>
+//       <div style={{ marginBottom: "20px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+//         <label htmlFor="fromDate">Fra dato:</label>
+//         <input
+//           id="fromDate"
+//           type="date"
+//           value={pendingFromDate}
+//           onChange={(e) => setPendingFromDate(e.target.value)}
+//           onBlur={() => setFromDate(pendingFromDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <label htmlFor="toDate">Til dato:</label>
+//         <input
+//           id="toDate"
+//           type="date"
+//           value={pendingToDate}
+//           onChange={(e) => setPendingToDate(e.target.value)}
+//           onBlur={() => setToDate(pendingToDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <button
+//           style={{
+//             marginLeft: "20px",
+//             padding: "8px 18px",
+//             background: "#1976d2",
+//             color: "#fff",
+//             border: "none",
+//             borderRadius: "5px",
+//             cursor: loading ? "not-allowed" : "pointer",
+//             fontWeight: "bold",
+//             fontSize: "16px",
+//             boxShadow: "0 2px 8px rgba(25, 118, 210, 0.08)",
+//             transition: "background 0.2s",
+//           }}
+//           onClick={handleLoad}
+//           disabled={loading || !fromDate || !toDate}
+//         >
+//           Last inn
+//         </button>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div
+//           style={{
+//             display: "grid",
+//             gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//             gap: "24px",
+//             width: "100%",
+//           }}
+//         >
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: "#fff",
+//                 boxShadow: "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 minWidth: 0,
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//               }}
+//             >
+//               <p>
+//                 <strong>Номер уведомления:</strong> {notice.noticeId || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Tittel:</strong> {extractText(notice["notice-title"]?.eng) || "Ukjent"}
+//               </p>
+//               <p>
+//                 <strong>Beskrivelse:</strong>{" "}
+//                 {extractText(notice["description-lot"]?.eng) || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Publiseringsdato:</strong> {notice["publication-date"] || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Region (NUTS):</strong> {notice.nutsCode || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Land:</strong> {notice.country || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>CPV-koder:</strong>{" "}
+//                 {Array.isArray(notice.cpvCodes)
+//                   ? notice.cpvCodes.join(", ")
+//                   : notice.cpvCodes || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Arbeidstype:</strong>{" "}
+//                 {extractText(notice["description-lot"]?.eng) || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Oppdragsgiver:</strong>{" "}
+//                 {extractText(notice.customer?.name) || "Ingen data"}
+//                 {notice.customer?.address && (
+//                   <> — {extractText(notice.customer.address)}, {extractText(notice.customer.city)}</>
+//                 )}
+//               </p>
+//               <p>
+//                 <strong>Leverandør:</strong>{" "}
+//                 {extractText(notice.provider?.name) || "Ingen data"}
+//                 {notice.provider?.address && (
+//                   <> — {extractText(notice.provider.address)}, {extractText(notice.provider.city)}</>
+//                 )}
+//               </p>
+//               {notice?.links?.xml?.MUL && (
+//                 <p>
+//                   <a href={notice.links.xml.MUL} target="_blank" rel="noopener noreferrer">
+//                     XML
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
+
+// export default DynamicListComponent;
+
+
+//  import React, { useState } from "react";
+
+// // Universell funksjon for å hente ut tekst fra streng, objekt med #text eller array av slike objekter
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = ({ setLocations }) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+
+//   // Laster data fra backend-script (alle felter fra JSON og XML er allerede inne)
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       const response = await fetch("http://localhost:4001/api/notices/with-xml", {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body: JSON.stringify({ from: fromDate, to: toDate })
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Lager locations for kartet (region, land)
+//       const locations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng) || "Ukjent",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data",
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Feil ved lasting av data:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   // Logger notices ved hver render
+//   React.useEffect(() => {
+//     console.log("notices (state):", notices);
+//   }, [notices]);
+
+//   return (
+//     <div
+//       style={{
+//         padding: "20px",
+//         background: "#f7f9fa",
+//         minHeight: "100vh",
+//       }}
+//     >
+//       <h2>Anbud</h2>
+//       <div style={{ marginBottom: "20px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+//         <label htmlFor="fromDate">Fra dato:</label>
+//         <input
+//           id="fromDate"
+//           type="date"
+//           value={pendingFromDate}
+//           onChange={(e) => setPendingFromDate(e.target.value)}
+//           onBlur={() => setFromDate(pendingFromDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <label htmlFor="toDate">Til dato:</label>
+//         <input
+//           id="toDate"
+//           type="date"
+//           value={pendingToDate}
+//           onChange={(e) => setPendingToDate(e.target.value)}
+//           onBlur={() => setToDate(pendingToDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <button
+//           style={{
+//             marginLeft: "20px",
+//             padding: "8px 18px",
+//             background: "#1976d2",
+//             color: "#fff",
+//             border: "none",
+//             borderRadius: "5px",
+//             cursor: loading ? "not-allowed" : "pointer",
+//             fontWeight: "bold",
+//             fontSize: "16px",
+//             boxShadow: "0 2px 8px rgba(25, 118, 210, 0.08)",
+//             transition: "background 0.2s",
+//           }}
+//           onClick={handleLoad}
+//           disabled={loading || !fromDate || !toDate}
+//         >
+//           Last inn
+//         </button>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div
+//           style={{
+//             display: "grid",
+//             gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//             gap: "24px",
+//             width: "100%",
+//           }}
+//         >
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: "#fff",
+//                 boxShadow: "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 minWidth: 0,
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//               }}
+//             >
+//               <p>
+//                 <strong>Tittel:</strong> {extractText(notice["notice-title"]?.eng) || "Ukjent"}
+//               </p>
+//               <p>
+//                 <strong>Beskrivelse:</strong>{" "}
+//                 {extractText(notice["description-lot"]?.eng) || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Publiseringsdato:</strong> {notice["publication-date"] || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Region (NUTS):</strong> {notice.nutsCode || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Land:</strong> {notice.country || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>CPV-koder:</strong>{" "}
+//                 {Array.isArray(notice.cpvCodes)
+//                   ? notice.cpvCodes.join(", ")
+//                   : notice.cpvCodes || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Arbeidstype:</strong>{" "}
+//                 {extractText(notice["description-lot"]?.eng) || "Ingen data"}
+//               </p>
+//               <p>
+//                 <strong>Oppdragsgiver:</strong>{" "}
+//                 {extractText(notice.customer?.name) || "Ingen data"}
+//                 {notice.customer?.address && (
+//                   <> — {extractText(notice.customer.address)}, {extractText(notice.customer.city)}</>
+//                 )}
+//               </p>
+//               <p>
+//                 <strong>Leverandør:</strong>{" "}
+//                 {extractText(notice.provider?.name) || "Ingen data"}
+//                 {notice.provider?.address && (
+//                   <> — {extractText(notice.provider.address)}, {extractText(notice.provider.city)}</>
+//                 )}
+//               </p>
+//               {notice?.links?.xml?.MUL && (
+//                 <p>
+//                   <a href={notice.links.xml.MUL} target="_blank" rel="noopener noreferrer">
+//                     XML
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
+
+// export default DynamicListComponent;
 
 // import React, { useState } from "react";
 
