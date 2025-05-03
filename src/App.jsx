@@ -1,39 +1,36 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import MapComponent from "./components/MapComponent";
 import DynamicListComponent from "./components/DynamicListComponent";
 
 const App = () => {
   const [locations, setLocations] = useState([]);
-  const apiURL = "/api/notices/search"; // Укажите базовый путь для API
-  const xmlURL = "https://example.com/data.xml"; // Укажите путь для XML
+  const [activeTender, setActiveTender] = useState(null);
+  const listRef = useRef(null);
+
+  // Единый обработчик для двойного клика на маркере и клика по элементу легенды
+  const handleNavigateToTender = (index) => {
+    console.log("Выбран тендер, индекс:", index);
+    setActiveTender(index);
+    if (listRef.current && listRef.current.scrollToTender) {
+      listRef.current.scrollToTender(index);
+    }
+  };
 
   return (
-    <div style={{
-      display: "flex",
-      height: "100vh",
-      width: "100vw",
-      margin: "0",
-      padding: "0"
-    }}>
-      <div style={{
-        flex: "2",
-        borderRight: "1px solid #ccc",
-        display: "flex",
-        flexDirection: "column"
-      }}>
-        <MapComponent locations={locations} />
+    <div style={{ display: "flex", height: "100vh", width: "100vw", margin: "0", padding: "0" }}>
+      <div style={{ flex: "2", borderRight: "1px solid #ccc", display: "flex", flexDirection: "column" }}>
+        <MapComponent
+          locations={locations}
+          onMarkerDoubleClick={handleNavigateToTender}
+          onLegendItemClick={handleNavigateToTender}
+        />
       </div>
-      <div style={{
-        flex: "1",
-        padding: "10px",
-        overflowY: "auto",
-        display: "flex",
-        flexDirection: "column"
-      }}>
-        <DynamicListComponent 
-          setLocations={setLocations} 
-          apiURL={apiURL} 
-          xmlURL={xmlURL} 
+      <div style={{ flex: "1", padding: "10px", overflowY: "auto", display: "flex", flexDirection: "column" }}>
+        <DynamicListComponent
+          ref={listRef}
+          setLocations={setLocations}
+          activeTender={activeTender}
+          apiURL="/api/notices/search"
         />
       </div>
     </div>
@@ -41,6 +38,155 @@ const App = () => {
 };
 
 export default App;
+
+
+// import React, { useState, useRef } from "react";
+// import MapComponent from "./components/MapComponent";
+// import DynamicListComponent from "./components/DynamicListComponent";
+
+// const App = () => {
+//   const [locations, setLocations] = useState([]);
+//   const [activeTender, setActiveTender] = useState(null);
+//   const listRef = useRef(null);
+
+//   // Единый обработчик для двойного клика на маркере и для клика по элементу легенды
+//   const handleNavigateToTender = (index) => {
+//     console.log("Выбран тендер, индекс:", index);
+//     setActiveTender(index);
+//     if (listRef.current && listRef.current.scrollToTender) {
+//       listRef.current.scrollToTender(index);
+//     }
+//   };
+
+//   return (
+//     <div style={{ display: "flex", height: "100vh", width: "100vw", margin: "0", padding: "0" }}>
+//       <div style={{ flex: "2", borderRight: "1px solid #ccc", display: "flex", flexDirection: "column" }}>
+//         <MapComponent
+//           locations={locations}
+//           onMarkerDoubleClick={handleNavigateToTender}
+//           onLegendItemClick={handleNavigateToTender}
+//         />
+//       </div>
+//       <div style={{ flex: "1", padding: "10px", overflowY: "auto", display: "flex", flexDirection: "column" }}>
+//         <DynamicListComponent
+//           ref={listRef}
+//           setLocations={setLocations}
+//           activeTender={activeTender}
+//           apiURL="/api/notices/search"
+//         />
+//       </div>
+//     </div>
+//   );
+// };
+
+// export default App;
+
+
+
+//работ888// import React, { useState, useRef } from "react";
+// import MapComponent from "./components/MapComponent";
+// import DynamicListComponent from "./components/DynamicListComponent";
+
+// const App = () => {
+//   const [locations, setLocations] = useState([]);
+//   const [activeTender, setActiveTender] = useState(null);
+//   const listRef = useRef(null);
+
+//   // Обработчик двойного клика по маркеру на карте
+//   const handleMarkerDoubleClick = (index) => {
+//     console.log("Установлен активный тендер:", index);
+//     setActiveTender(index);
+//     if (listRef.current && listRef.current.scrollToTender) {
+//       listRef.current.scrollToTender(index);
+//     }
+//   };
+
+//   return (
+//     <div
+//       style={{
+//         display: "flex",
+//         height: "100vh",
+//         width: "100vw",
+//         margin: "0",
+//         padding: "0"
+//       }}
+//     >
+//       <div
+//         style={{
+//           flex: "2",
+//           borderRight: "1px solid #ccc",
+//           display: "flex",
+//           flexDirection: "column"
+//         }}
+//       >
+//         <MapComponent locations={locations} onMarkerDoubleClick={handleMarkerDoubleClick} />
+//       </div>
+//       <div
+//         style={{
+//           flex: "1",
+//           padding: "10px",
+//           overflowY: "auto",
+//           display: "flex",
+//           flexDirection: "column"
+//         }}
+//       >
+//         <DynamicListComponent
+//           ref={listRef}
+//           setLocations={setLocations}
+//           activeTender={activeTender}
+//         />
+//       </div>
+//     </div>
+//   );
+// };
+
+// export default App;
+
+
+
+///Рабочий 777// import React, { useState } from "react";
+// import MapComponent from "./components/MapComponent";
+// import DynamicListComponent from "./components/DynamicListComponent";
+
+// const App = () => {
+//   const [locations, setLocations] = useState([]);
+//   const apiURL = "/api/notices/search"; // Укажите базовый путь для API
+//   const xmlURL = "https://example.com/data.xml"; // Укажите путь для XML
+
+//   return (
+//     <div style={{
+//       display: "flex",
+//       height: "100vh",
+//       width: "100vw",
+//       margin: "0",
+//       padding: "0"
+//     }}>
+//       <div style={{
+//         flex: "2",
+//         borderRight: "1px solid #ccc",
+//         display: "flex",
+//         flexDirection: "column"
+//       }}>
+//         <MapComponent locations={locations} />
+//       </div>
+//       <div style={{
+//         flex: "1",
+//         padding: "10px",
+//         overflowY: "auto",
+//         display: "flex",
+//         flexDirection: "column"
+//       }}>
+//         <DynamicListComponent 
+//           setLocations={setLocations} 
+//           apiURL={apiURL} 
+//           xmlURL={xmlURL} 
+//         />
+//       </div>
+//     </div>
+//   );
+// };
+
+// export default App;
 
 
 

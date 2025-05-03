@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useImperativeHandle, forwardRef } from "react";
 
-// Универсальная функция для извлечения текста
+// Universell funksjon for å hente ut tekst
 function extractText(val) {
   if (!val) return "";
   if (typeof val === "string") return val;
@@ -9,7 +9,7 @@ function extractText(val) {
   return "";
 }
 
-const DynamicListComponent = ({ setLocations }) => {
+const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL }, ref) => {
   const [notices, setNotices] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -19,7 +19,18 @@ const DynamicListComponent = ({ setLocations }) => {
   const [useScraping, setUseScraping] = useState(false);
   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
 
-  // Загрузка данных с бэкенда
+  // Oppretter ref for hvert element i listen
+  const listRefs = useRef([]);
+
+  // Impertativ metode for å rulle til valgt element
+  useImperativeHandle(ref, () => ({
+    scrollToTender: (index) => {
+      if (listRefs.current[index]) {
+        listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+  }));
+
   const handleLoad = async () => {
     if (!fromDate || !toDate) return;
     setLoading(true);
@@ -32,136 +43,151 @@ const DynamicListComponent = ({ setLocations }) => {
         url = "http://localhost:4002/api/notices/scrape-site";
         body = JSON.stringify({ from: fromDate, to: toDate });
       } else {
-        url = "http://localhost:4001/api/notices/with-xml";
+        url = apiURL;
         body = JSON.stringify({ from: fromDate, to: toDate });
       }
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body,
+        body
       });
       const data = await response.json();
       setNotices(data.results || []);
 
-      // Формируем locations для карты
+      // Forming av et array med locations for kartet
       const locations = (data.results || []).map((notice) => ({
         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+        buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
         nutsCode: notice.nutsCode || "Ingen data",
-        country: notice.country || "Ingen data",
+        country: notice.country || "Ingen data"
       }));
       setLocations(locations);
     } catch (e) {
-      console.error("Ошибка при загрузке данных:", e);
+      console.error("Feil ved lasting av data:", e);
       setNotices([]);
     }
     setLoading(false);
   };
 
-  React.useEffect(() => {
-    console.log("notices (state):", notices);
-  }, [notices]);
+  // Ved klikk på et listeelement – rull til det
+  const handleItemClick = (index) => {
+    if (listRefs.current[index]) {
+      listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
 
   return (
-    <div
-      style={{
-        padding: "20px",
-        background: "#f7f9fa",
-        minHeight: "100vh",
-      }}
-    >
+    <div style={{ padding: "20px", background: "#f7f9fa", minHeight: "100vh" }}>
       <h2>Anbud</h2>
-      <div
-        style={{
-          marginBottom: "20px",
-          display: "flex",
-          alignItems: "center",
-          gap: "10px",
-          flexWrap: "wrap",
-        }}
-      >
-        <label>
-          <input
-            type="checkbox"
-            checked={useScraping}
-            onChange={() => {
-              setUseScraping((v) => !v);
-              if (useDoffinScraping) setUseDoffinScraping(false);
+      {/* Kontrollpanelet */}
+      <div style={{ marginBottom: "20px", display: "flex", flexDirection: "column", gap: "10px" }}>
+        {/* Kolonne for sjekkbokser */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <label style={{ fontSize: "16px", fontWeight: "500" }}>
+            <input
+              type="checkbox"
+              checked={useScraping}
+              onChange={() => {
+                setUseScraping((v) => !v);
+                if (useDoffinScraping) setUseDoffinScraping(false);
+              }}
+              style={{ marginRight: "8px" }}
+            />
+            Bruk TED-nettskraping
+          </label>
+          <label style={{ fontSize: "16px", fontWeight: "500" }}>
+            <input
+              type="checkbox"
+              checked={useDoffinScraping}
+              onChange={() => {
+                setUseDoffinScraping((v) => !v);
+                if (useScraping) setUseScraping(false);
+              }}
+              style={{ marginRight: "8px" }}
+            />
+            Bruk Doffin-databasen
+          </label>
+        </div>
+        {/* Datoer vises i kolonne */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <label htmlFor="fromDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+              Fra dato:
+            </label>
+            <input
+              id="fromDate"
+              type="date"
+              value={pendingFromDate}
+              onChange={(e) => setPendingFromDate(e.target.value)}
+              onBlur={() => setFromDate(pendingFromDate)}
+              style={{
+                padding: "6px",
+                fontSize: "16px",
+                borderRadius: "4px",
+                border: "1px solid #ccc"
+              }}
+            />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <label htmlFor="toDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+              Til dato:
+            </label>
+            <input
+              id="toDate"
+              type="date"
+              value={pendingToDate}
+              onChange={(e) => setPendingToDate(e.target.value)}
+              onBlur={() => setToDate(pendingToDate)}
+              style={{
+                padding: "6px",
+                fontSize: "16px",
+                borderRadius: "4px",
+                border: "1px solid #ccc"
+              }}
+            />
+          </div>
+        </div>
+        {/* Sentrert knapp med redusert skyggeeffekt */}
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <button
+            style={{
+              background: "linear-gradient(145deg, #1976d2, #0d47a1)",
+              border: "none",
+              borderRadius: "10px",
+              boxShadow: "2px 2px 4px rgba(25, 118, 210, 0.05)",
+              color: "#fff",
+              fontWeight: "bold",
+              fontSize: "16px",
+              padding: "12px 24px",
+              cursor: loading ? "not-allowed" : "pointer",
+              transition: "all 0.2s"
             }}
-            style={{ marginRight: "8px" }}
-          />
-          Использовать скрапинг сайта TED
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={useDoffinScraping}
-            onChange={() => {
-              setUseDoffinScraping((v) => !v);
-              if (useScraping) setUseScraping(false);
-            }}
-            style={{ marginRight: "8px" }}
-          />
-          Использовать базу Doffin
-        </label>
-        <label htmlFor="fromDate">Fra dato:</label>
-        <input
-          id="fromDate"
-          type="date"
-          value={pendingFromDate}
-          onChange={(e) => setPendingFromDate(e.target.value)}
-          onBlur={() => setFromDate(pendingFromDate)}
-          style={{ marginRight: "10px" }}
-        />
-        <label htmlFor="toDate">Til dato:</label>
-        <input
-          id="toDate"
-          type="date"
-          value={pendingToDate}
-          onChange={(e) => setPendingToDate(e.target.value)}
-          onBlur={() => setToDate(pendingToDate)}
-          style={{ marginRight: "10px" }}
-        />
-        <button
-          style={{
-            marginLeft: "20px",
-            padding: "8px 18px",
-            background: "#1976d2",
-            color: "#fff",
-            border: "none",
-            borderRadius: "5px",
-            cursor: loading ? "not-allowed" : "pointer",
-            fontWeight: "bold",
-            fontSize: "16px",
-            boxShadow: "0 2px 8px rgba(25, 118, 210, 0.08)",
-            transition: "background 0.2s",
-          }}
-          onClick={handleLoad}
-          disabled={loading || !fromDate || !toDate}
-        >
-          Last inn
-        </button>
+            onClick={handleLoad}
+            disabled={loading || !fromDate || !toDate}
+          >
+            Last inn
+          </button>
+        </div>
       </div>
       {loading ? (
         <p>Laster...</p>
       ) : notices.length === 0 ? (
         <p>Ingen data å vise</p>
       ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-            gap: "24px",
-            width: "100%",
-          }}
-        >
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px", width: "100%" }}>
           {notices.map((notice, index) => (
             <div
               key={index}
+              ref={(el) => (listRefs.current[index] = el)}
+              onClick={() => handleItemClick(index)}
               style={{
                 border: "1.5px solid #d1e3f6",
                 borderRadius: "10px",
-                background: "#fff",
-                boxShadow: "0 2px 8px rgba(25, 118, 210, 0.04)",
+                background: activeTender === index ? "#e0e0e0" : "#fff",
+                boxShadow:
+                  activeTender === index
+                    ? "0 2px 8px rgba(25, 118, 210, 0.2)"
+                    : "0 2px 8px rgba(25, 118, 210, 0.04)",
                 padding: "18px 22px",
                 display: "flex",
                 flexDirection: "column",
@@ -169,6 +195,7 @@ const DynamicListComponent = ({ setLocations }) => {
                 height: "100%",
                 transition: "box-shadow 0.2s",
                 wordBreak: "break-word",
+                cursor: "pointer"
               }}
             >
               <p>
@@ -222,7 +249,7 @@ const DynamicListComponent = ({ setLocations }) => {
               {notice.link && (
                 <p>
                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
-                    Peréyti k uvedomleniyu
+                    Se mer informasjon
                   </a>
                 </p>
               )}
@@ -232,9 +259,977 @@ const DynamicListComponent = ({ setLocations }) => {
       )}
     </div>
   );
-};
+});
 
 export default DynamicListComponent;
+
+
+
+
+
+// import React, { useState, useRef, useImperativeHandle, forwardRef } from "react";
+
+// // Универсальная функция для извлечения текста
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL }, ref) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+
+//   // Создаем ref для каждого элемента списка
+//   const listRefs = useRef([]);
+
+//   // Императивный метод для прокрутки выбранного элемента
+//   useImperativeHandle(ref, () => ({
+//     scrollToTender: (index) => {
+//       if (listRefs.current[index]) {
+//         listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//       }
+//     }
+//   }));
+
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = apiURL;
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Формируем массив locations для карты
+//       const locations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data"
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Ошибка при загрузке данных:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   // При клике на элемент списка – прокручиваем его в зону видимости и устанавливаем activeTender
+//   const handleItemClick = (index) => {
+//     if (listRefs.current[index]) {
+//       listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//     }
+//   };
+
+//   return (
+//     <div style={{ padding: "20px", background: "#f7f9fa", minHeight: "100vh" }}>
+//       <h2>Anbud</h2>
+//       <div style={{ marginBottom: "20px", display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "center" }}>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useScraping}
+//             onChange={() => {
+//               setUseScraping((v) => !v);
+//               if (useDoffinScraping) setUseDoffinScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать скрапинг сайта TED
+//         </label>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useDoffinScraping}
+//             onChange={() => {
+//               setUseDoffinScraping((v) => !v);
+//               if (useScraping) setUseScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать базу Doffin
+//         </label>
+//         <label htmlFor="fromDate">Fra dato:</label>
+//         <input
+//           id="fromDate"
+//           type="date"
+//           value={pendingFromDate}
+//           onChange={(e) => setPendingFromDate(e.target.value)}
+//           onBlur={() => setFromDate(pendingFromDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <label htmlFor="toDate">Til dato:</label>
+//         <input
+//           id="toDate"
+//           type="date"
+//           value={pendingToDate}
+//           onChange={(e) => setPendingToDate(e.target.value)}
+//           onBlur={() => setToDate(pendingToDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <button
+//           style={{
+//             marginLeft: "20px",
+//             padding: "8px 18px",
+//             background: "#1976d2",
+//             color: "#fff",
+//             border: "none",
+//             borderRadius: "5px",
+//             cursor: loading ? "not-allowed" : "pointer",
+//             fontWeight: "bold",
+//             fontSize: "16px",
+//             boxShadow: "0 2px 8px rgba(25, 118, 210, 0.08)",
+//             transition: "background 0.2s"
+//           }}
+//           onClick={handleLoad}
+//           disabled={loading || !fromDate || !toDate}
+//         >
+//           Last inn
+//         </button>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px", width: "100%" }}>
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               ref={(el) => (listRefs.current[index] = el)}
+//               onClick={() => handleItemClick(index)}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: activeTender === index ? "#e0e0e0" : "#fff",
+//                 boxShadow:
+//                   activeTender === index
+//                     ? "0 2px 8px rgba(25, 118, 210, 0.2)"
+//                     : "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//                 cursor: "pointer"
+//               }}
+//             >
+//               <p>
+//                 <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//               </p>
+//               {notice.buyer && (
+//                 <p>
+//                   <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                 </p>
+//               )}
+//               {notice.typeAnnouncement && (
+//                 <p>
+//                   <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+//                 </p>
+//               )}
+//               {notice.announcementSubtype && (
+//                 <p>
+//                   <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+//                 </p>
+//               )}
+//               {notice.description && (
+//                 <p>
+//                   <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.location && (
+//                 <p>
+//                   <strong>Sted:</strong> {notice.location}
+//                 </p>
+//               )}
+//               {notice.estValue && (
+//                 <p>
+//                   <strong>Estimert verdi:</strong> {notice.estValue}
+//                 </p>
+//               )}
+//               {notice.publicationDate && (
+//                 <p>
+//                   <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.deadline && (
+//                 <p>
+//                   <strong>Frist:</strong> {notice.deadline}
+//                 </p>
+//               )}
+//               {notice.eoes && (
+//                 <p>
+//                   <strong>EØS:</strong> {notice.eoes}
+//                 </p>
+//               )}
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     Peréyti k uvedomleniyu
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// });
+
+// export default DynamicListComponent;
+
+
+
+
+
+//РАбочая прокрутка// import React, { useState, useRef, useImperativeHandle, forwardRef } from "react";
+
+// // Универсальная функция для извлечения текста
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL }, ref) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+
+//   // Создаем ref для каждого элемента списка
+//   const listRefs = useRef([]);
+
+//   // Императивный метод для прокрутки нужного элемента в зону видимости
+//   useImperativeHandle(ref, () => ({
+//     scrollToTender: (index) => {
+//       if (listRefs.current[index]) {
+//         listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//       }
+//     }
+//   }));
+
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = apiURL; // Используем переданный apiURL
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Формирование массива локаций для карты
+//       const locations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data"
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Ошибка при загрузке данных:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   return (
+//     <div style={{ padding: "20px", background: "#f7f9fa", minHeight: "100vh" }}>
+//       <h2>Anbud</h2>
+//       <div style={{ marginBottom: "20px", display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "center" }}>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useScraping}
+//             onChange={() => {
+//               setUseScraping((v) => !v);
+//               if (useDoffinScraping) setUseDoffinScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать скрапинг сайта TED
+//         </label>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useDoffinScraping}
+//             onChange={() => {
+//               setUseDoffinScraping((v) => !v);
+//               if (useScraping) setUseScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать базу Doffin
+//         </label>
+//         <label htmlFor="fromDate">Fra dato:</label>
+//         <input
+//           id="fromDate"
+//           type="date"
+//           value={pendingFromDate}
+//           onChange={(e) => setPendingFromDate(e.target.value)}
+//           onBlur={() => setFromDate(pendingFromDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <label htmlFor="toDate">Til dato:</label>
+//         <input
+//           id="toDate"
+//           type="date"
+//           value={pendingToDate}
+//           onChange={(e) => setPendingToDate(e.target.value)}
+//           onBlur={() => setToDate(pendingToDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <button
+//           style={{
+//             marginLeft: "20px",
+//             padding: "8px 18px",
+//             background: "#1976d2",
+//             color: "#fff",
+//             border: "none",
+//             borderRadius: "5px",
+//             cursor: loading ? "not-allowed" : "pointer",
+//             fontWeight: "bold",
+//             fontSize: "16px",
+//             boxShadow: "0 2px 8px rgba(25, 118, 210, 0.08)",
+//             transition: "background 0.2s"
+//           }}
+//           onClick={handleLoad}
+//           disabled={loading || !fromDate || !toDate}
+//         >
+//           Last inn
+//         </button>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px", width: "100%" }}>
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               ref={(el) => (listRefs.current[index] = el)}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: activeTender === index ? "#e0e0e0" : "#fff",
+//                 boxShadow: activeTender === index
+//                   ? "0 2px 8px rgba(25, 118, 210, 0.2)"
+//                   : "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word"
+//               }}
+//             >
+//               <p>
+//                 <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//               </p>
+//               {notice.buyer && (
+//                 <p>
+//                   <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                 </p>
+//               )}
+//               {notice.typeAnnouncement && (
+//                 <p>
+//                   <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+//                 </p>
+//               )}
+//               {notice.announcementSubtype && (
+//                 <p>
+//                   <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+//                 </p>
+//               )}
+//               {notice.description && (
+//                 <p>
+//                   <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.location && (
+//                 <p>
+//                   <strong>Sted:</strong> {notice.location}
+//                 </p>
+//               )}
+//               {notice.estValue && (
+//                 <p>
+//                   <strong>Estimert verdi:</strong> {notice.estValue}
+//                 </p>
+//               )}
+//               {notice.publicationDate && (
+//                 <p>
+//                   <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.deadline && (
+//                 <p>
+//                   <strong>Frist:</strong> {notice.deadline}
+//                 </p>
+//               )}
+//               {notice.eoes && (
+//                 <p>
+//                   <strong>EØS:</strong> {notice.eoes}
+//                 </p>
+//               )}
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     Peréyti k uvedomleniyu
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// });
+
+// export default DynamicListComponent;
+
+
+
+
+
+
+
+
+
+
+
+
+//РАБ КОД 777// import React, { useState } from "react";
+
+// // Универсальная функция для извлечения текста
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = ({ setLocations }) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+
+//   // Загрузка данных с бэкенда
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = "http://localhost:4001/api/notices/with-xml";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body,
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Формируем locations для карты,
+//       // добавляя поле buyer (или, если его нет, Oppdragsgiver)
+//       const locations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data",
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Ошибка при загрузке данных:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   React.useEffect(() => {
+//     console.log("notices (state):", notices);
+//   }, [notices]);
+
+//   return (
+//     <div
+//       style={{
+//         padding: "20px",
+//         background: "#f7f9fa",
+//         minHeight: "100vh",
+//       }}
+//     >
+//       <h2>Anbud</h2>
+//       <div
+//         style={{
+//           marginBottom: "20px",
+//           display: "flex",
+//           alignItems: "center",
+//           gap: "10px",
+//           flexWrap: "wrap",
+//         }}
+//       >
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useScraping}
+//             onChange={() => {
+//               setUseScraping((v) => !v);
+//               if (useDoffinScraping) setUseDoffinScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать скрапинг сайта TED
+//         </label>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useDoffinScraping}
+//             onChange={() => {
+//               setUseDoffinScraping((v) => !v);
+//               if (useScraping) setUseScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать базу Doffin
+//         </label>
+//         <label htmlFor="fromDate">Fra dato:</label>
+//         <input
+//           id="fromDate"
+//           type="date"
+//           value={pendingFromDate}
+//           onChange={(e) => setPendingFromDate(e.target.value)}
+//           onBlur={() => setFromDate(pendingFromDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <label htmlFor="toDate">Til dato:</label>
+//         <input
+//           id="toDate"
+//           type="date"
+//           value={pendingToDate}
+//           onChange={(e) => setPendingToDate(e.target.value)}
+//           onBlur={() => setToDate(pendingToDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <button
+//           style={{
+//             marginLeft: "20px",
+//             padding: "8px 18px",
+//             background: "#1976d2",
+//             color: "#fff",
+//             border: "none",
+//             borderRadius: "5px",
+//             cursor: loading ? "not-allowed" : "pointer",
+//             fontWeight: "bold",
+//             fontSize: "16px",
+//             boxShadow: "0 2px 8px rgba(25, 118, 210, 0.08)",
+//             transition: "background 0.2s",
+//           }}
+//           onClick={handleLoad}
+//           disabled={loading || !fromDate || !toDate}
+//         >
+//           Last inn
+//         </button>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div
+//           style={{
+//             display: "grid",
+//             gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//             gap: "24px",
+//             width: "100%",
+//           }}
+//         >
+//           {notices.map((notice, index) => {
+//             console.log("777", notice.buyer);
+//             return (
+//               <div
+//                 key={index}
+//                 style={{
+//                   border: "1.5px solid #d1e3f6",
+//                   borderRadius: "10px",
+//                   background: "#fff",
+//                   boxShadow: "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                   padding: "18px 22px",
+//                   display: "flex",
+//                   flexDirection: "column",
+//                   justifyContent: "space-between",
+//                   height: "100%",
+//                   transition: "box-shadow 0.2s",
+//                   wordBreak: "break-word",
+//                 }}
+//               >
+//                 <p>
+//                   <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//                 </p>
+//                 {notice.buyer && (
+//                   <p>
+//                     <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                   </p>
+//                 )}
+//                 {notice.typeAnnouncement && (
+//                   <p>
+//                     <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+//                   </p>
+//                 )}
+//                 {notice.announcementSubtype && (
+//                   <p>
+//                     <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+//                   </p>
+//                 )}
+//                 {notice.description && (
+//                   <p>
+//                     <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                   </p>
+//                 )}
+//                 {notice.location && (
+//                   <p>
+//                     <strong>Sted:</strong> {notice.location}
+//                   </p>
+//                 )}
+//                 {notice.estValue && (
+//                   <p>
+//                     <strong>Estimert verdi:</strong> {notice.estValue}
+//                   </p>
+//                 )}
+//                 {notice.publicationDate && (
+//                   <p>
+//                     <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                   </p>
+//                 )}
+//                 {notice.deadline && (
+//                   <p>
+//                     <strong>Frist:</strong> {notice.deadline}
+//                   </p>
+//                 )}
+//                 {notice.eoes && (
+//                   <p>
+//                     <strong>EØS:</strong> {notice.eoes}
+//                   </p>
+//                 )}
+//                 {notice.link && (
+//                   <p>
+//                     <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                       Peréyti k uvedomleniyu
+//                     </a>
+//                   </p>
+//                 )}
+//               </div>
+//             );
+//           })}
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
+
+// export default DynamicListComponent;
+
+
+
+// import React, { useState } from "react";
+
+// // Универсальная функция для извлечения текста
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = ({ setLocations }) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+
+//   // Загрузка данных с бэкенда
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = "http://localhost:4001/api/notices/with-xml";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body,
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Формируем locations для карты
+//       const locations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data",
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Ошибка при загрузке данных:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   React.useEffect(() => {
+//     console.log("notices (state):", notices);
+//   }, [notices]);
+
+//   return (
+//     <div
+//       style={{
+//         padding: "20px",
+//         background: "#f7f9fa",
+//         minHeight: "100vh",
+//       }}
+//     >
+//       <h2>Anbud</h2>
+//       <div
+//         style={{
+//           marginBottom: "20px",
+//           display: "flex",
+//           alignItems: "center",
+//           gap: "10px",
+//           flexWrap: "wrap",
+//         }}
+//       >
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useScraping}
+//             onChange={() => {
+//               setUseScraping((v) => !v);
+//               if (useDoffinScraping) setUseDoffinScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать скрапинг сайта TED
+//         </label>
+//         <label>
+//           <input
+//             type="checkbox"
+//             checked={useDoffinScraping}
+//             onChange={() => {
+//               setUseDoffinScraping((v) => !v);
+//               if (useScraping) setUseScraping(false);
+//             }}
+//             style={{ marginRight: "8px" }}
+//           />
+//           Использовать базу Doffin
+//         </label>
+//         <label htmlFor="fromDate">Fra dato:</label>
+//         <input
+//           id="fromDate"
+//           type="date"
+//           value={pendingFromDate}
+//           onChange={(e) => setPendingFromDate(e.target.value)}
+//           onBlur={() => setFromDate(pendingFromDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <label htmlFor="toDate">Til dato:</label>
+//         <input
+//           id="toDate"
+//           type="date"
+//           value={pendingToDate}
+//           onChange={(e) => setPendingToDate(e.target.value)}
+//           onBlur={() => setToDate(pendingToDate)}
+//           style={{ marginRight: "10px" }}
+//         />
+//         <button
+//           style={{
+//             marginLeft: "20px",
+//             padding: "8px 18px",
+//             background: "#1976d2",
+//             color: "#fff",
+//             border: "none",
+//             borderRadius: "5px",
+//             cursor: loading ? "not-allowed" : "pointer",
+//             fontWeight: "bold",
+//             fontSize: "16px",
+//             boxShadow: "0 2px 8px rgba(25, 118, 210, 0.08)",
+//             transition: "background 0.2s",
+//           }}
+//           onClick={handleLoad}
+//           disabled={loading || !fromDate || !toDate}
+//         >
+//           Last inn
+//         </button>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div
+//           style={{
+//             display: "grid",
+//             gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//             gap: "24px",
+//             width: "100%",
+//           }}
+//         >
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: "#fff",
+//                 boxShadow: "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//               }}
+//             >
+//               <p>
+//                 <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//               </p>
+//               {notice.buyer && (
+//                 <p>
+//                   <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                 </p>
+//               )}
+//               {notice.typeAnnouncement && (
+//                 <p>
+//                   <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+//                 </p>
+//               )}
+//               {notice.announcementSubtype && (
+//                 <p>
+//                   <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+//                 </p>
+//               )}
+//               {notice.description && (
+//                 <p>
+//                   <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.location && (
+//                 <p>
+//                   <strong>Sted:</strong> {notice.location}
+//                 </p>
+//               )}
+//               {notice.estValue && (
+//                 <p>
+//                   <strong>Estimert verdi:</strong> {notice.estValue}
+//                 </p>
+//               )}
+//               {notice.publicationDate && (
+//                 <p>
+//                   <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.deadline && (
+//                 <p>
+//                   <strong>Frist:</strong> {notice.deadline}
+//                 </p>
+//               )}
+//               {notice.eoes && (
+//                 <p>
+//                   <strong>EØS:</strong> {notice.eoes}
+//                 </p>
+//               )}
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     Peréyti k uvedomleniyu
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
+
+// export default DynamicListComponent;
 
 
 
