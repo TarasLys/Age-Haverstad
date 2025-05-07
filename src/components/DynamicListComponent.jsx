@@ -1,12 +1,32 @@
-import React, { useState, useRef, useImperativeHandle, forwardRef } from "react";
+import React, { useState, useRef, useImperativeHandle, forwardRef, useEffect } from "react";
 
-// Universell funksjon for å hente ut tekst
 function extractText(val) {
   if (!val) return "";
   if (typeof val === "string") return val;
   if (typeof val === "object" && "#text" in val) return val["#text"];
   if (Array.isArray(val)) return val.map(extractText).join("; ");
   return "";
+}
+
+function getTruncatedName(location) {
+  const buyer = location.buyer || location.Oppdragsgiver;
+  if (buyer) {
+    const cleanText = buyer.replace(/[-–—]/g, " ");
+    const words = cleanText.trim().split(/\s+/);
+    return words.slice(0, 2).join(" ");
+  }
+  return "unknown";
+}
+
+// Функция нормализации: удаляет запятые, приводит строку к нижнему регистру и убирает пробелы
+function normalizeName(name) {
+  return name.replace(/,/g, "").toLowerCase().trim();
+}
+
+// Функция форматирования строки для отображения (первая буква заглавная, остальные — строчные)
+function capitalizeName(name) {
+  if (!name) return "";
+  return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
 }
 
 const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL }, ref) => {
@@ -18,11 +38,11 @@ const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL },
   const [loading, setLoading] = useState(false);
   const [useScraping, setUseScraping] = useState(false);
   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
-
-  // Oppretter ref for hvert element i listen
+  const [cpvCode, setCpvCode] = useState("45000000");
+  const [filterValue, setFilterValue] = useState(""); // Состояние выбранного фильтра
   const listRefs = useRef([]);
+  const listContainerRef = useRef(null);
 
-  // Impertativ metode for å rulle til valgt element
   useImperativeHandle(ref, () => ({
     scrollToTender: (index) => {
       if (listRefs.current[index]) {
@@ -38,7 +58,7 @@ const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL },
       let url, body;
       if (useDoffinScraping) {
         url = "http://localhost:4003/api/notices/doffin-scrape";
-        body = JSON.stringify({ from: fromDate, to: toDate });
+        body = JSON.stringify({ from: fromDate, to: toDate, cpv: cpvCode });
       } else if (useScraping) {
         url = "http://localhost:4002/api/notices/scrape-site";
         body = JSON.stringify({ from: fromDate, to: toDate });
@@ -54,14 +74,14 @@ const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL },
       const data = await response.json();
       setNotices(data.results || []);
 
-      // Forming av et array med locations for kartet
-      const locations = (data.results || []).map((notice) => ({
+      // Вычисляем полный список локаций для карты
+      const fullLocations = (data.results || []).map((notice) => ({
         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
         buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
         nutsCode: notice.nutsCode || "Ingen data",
         country: notice.country || "Ingen data"
       }));
-      setLocations(locations);
+      setLocations(fullLocations);
     } catch (e) {
       console.error("Feil ved lasting av data:", e);
       setNotices([]);
@@ -69,19 +89,51 @@ const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL },
     setLoading(false);
   };
 
-  // Ved klikk på et listeelement – rull til det
+  // При изменении фильтра или списка аукционов обновляем данные для карты.
+  // Здесь фильтрация происходит по нормализованным значениям
+  useEffect(() => {
+    const filteredNotices = filterValue
+      ? notices.filter((notice) => normalizeName(getTruncatedName(notice)) === filterValue)
+      : notices;
+    const filteredLocations = filteredNotices.map((notice) => ({
+      name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+      buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+      nutsCode: notice.nutsCode || "Ingen data",
+      country: notice.country || "Ingen data"
+    }));
+    setLocations(filteredLocations);
+  }, [filterValue, notices, setLocations]);
+
+  // Фильтруем список аукционов для отображения по нормализованным значениям
+  const displayedNotices = filterValue
+    ? notices.filter((notice) => normalizeName(getTruncatedName(notice)) === filterValue)
+    : notices;
+
+  // Опции фильтра формируются из нормализованных значений, чтобы, например,
+  // "dovre kommune" и "dovre kommune" считались одинаковыми.
+  const filterOptions = Array.from(
+    new Set(notices.map((notice) => normalizeName(getTruncatedName(notice))))
+  ).sort();
+
   const handleItemClick = (index) => {
     if (listRefs.current[index]) {
       listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
     }
   };
 
+  // Обработчик для стрелочки – прокручивает контейнер списка к началу
+  const scrollListToTop = () => {
+    if (listContainerRef.current) {
+      listContainerRef.current.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
+
   return (
     <div style={{ padding: "20px", background: "#f7f9fa", minHeight: "100vh" }}>
       <h2>Anbud</h2>
-      {/* Kontrollpanelet */}
+      {/* Контрольная панель */}
       <div style={{ marginBottom: "20px", display: "flex", flexDirection: "column", gap: "10px" }}>
-        {/* Kolonne for sjekkbokser */}
+        {/* Чекбоксы для выбора режима скрапинга */}
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           <label style={{ fontSize: "16px", fontWeight: "500" }}>
             <input
@@ -108,7 +160,28 @@ const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL },
             Bruk Doffin-databasen
           </label>
         </div>
-        {/* Datoer vises i kolonne */}
+        {useDoffinScraping && (
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <label htmlFor="cpv" style={{ fontSize: "16px", fontWeight: "500" }}>
+              CPV kode og ord:
+            </label>
+            <input
+              id="cpv"
+              type="text"
+              value={cpvCode}
+              onChange={(e) => setCpvCode(e.target.value)}
+              placeholder="45000000 eller nord-fron"
+              style={{
+                padding: "6px",
+                fontSize: "16px",
+                borderRadius: "4px",
+                border: "1px solid #ccc",
+                width: "180px"
+              }}
+            />
+          </div>
+        )}
+        {/* Поля выбора дат */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             <label htmlFor="fromDate" style={{ fontSize: "16px", fontWeight: "500" }}>
@@ -147,7 +220,42 @@ const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL },
             />
           </div>
         </div>
-        {/* Sentrert knapp med redusert skyggeeffekt */}
+        {/* Новый фильтр – селект, который появляется после скрапинга */}
+        {notices.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "row",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: "10px",
+            }}
+          >
+            <label htmlFor="filterSelect" style={{ fontSize: "16px", fontWeight: "500" }}>
+              Filtrer etter oppdragsgiver:
+            </label>
+            <select
+              id="filterSelect"
+              value={filterValue}
+              onChange={(e) => setFilterValue(e.target.value)}
+              style={{
+                padding: "6px",
+                fontSize: "16px",
+                borderRadius: "4px",
+                border: "1px solid #ccc",
+                width: "100%",
+                maxWidth: "300px",
+              }}
+            >
+              <option value="">Alle</option>
+              {filterOptions.map((opt) => (
+                <option key={opt} value={opt}>
+                  {capitalizeName(opt)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div style={{ display: "flex", justifyContent: "center" }}>
           <button
             style={{
@@ -160,7 +268,7 @@ const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL },
               fontSize: "16px",
               padding: "12px 24px",
               cursor: loading ? "not-allowed" : "pointer",
-              transition: "all 0.2s"
+              transition: "all 0.2s",
             }}
             onClick={handleLoad}
             disabled={loading || !fromDate || !toDate}
@@ -174,94 +282,2493 @@ const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL },
       ) : notices.length === 0 ? (
         <p>Ingen data å vise</p>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px", width: "100%" }}>
-          {notices.map((notice, index) => (
-            <div
-              key={index}
-              ref={(el) => (listRefs.current[index] = el)}
-              onClick={() => handleItemClick(index)}
-              style={{
-                border: "1.5px solid #d1e3f6",
-                borderRadius: "10px",
-                background: activeTender === index ? "#e0e0e0" : "#fff",
-                boxShadow:
-                  activeTender === index
-                    ? "0 2px 8px rgba(25, 118, 210, 0.2)"
-                    : "0 2px 8px rgba(25, 118, 210, 0.04)",
-                padding: "18px 22px",
-                display: "flex",
-                flexDirection: "column",
-                justifyContent: "space-between",
-                height: "100%",
-                transition: "box-shadow 0.2s",
-                wordBreak: "break-word",
-                cursor: "pointer"
-              }}
-            >
-              <p>
-                <strong>Tittel:</strong> {notice.title || "Ukjent"}
-              </p>
-              {notice.buyer && (
+        // Оборачиваем список в контейнер с фиксированной максимальной высотой и вертикальной прокруткой
+        <div
+          ref={listContainerRef}
+          style={{
+            maxHeight: "70vh",
+            overflowY: "auto",
+            paddingRight: "10px" // чтобы не обрезался скроллбар
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+              gap: "24px",
+              width: "100%",
+            }}
+          >
+            {displayedNotices.map((notice, index) => (
+              <div
+                key={index}
+                ref={(el) => (listRefs.current[index] = el)}
+                onClick={() => handleItemClick(index)}
+                style={{
+                  border: "1.5px solid #d1e3f6",
+                  borderRadius: "10px",
+                  background: activeTender === index ? "#e0e0e0" : "#fff",
+                  boxShadow:
+                    activeTender === index
+                      ? "0 2px 8px rgba(25, 118, 210, 0.2)"
+                      : "0 2px 8px rgba(25, 118, 210, 0.04)",
+                  padding: "18px 22px",
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "space-between",
+                  height: "100%",
+                  transition: "box-shadow 0.2s",
+                  wordBreak: "break-word",
+                  cursor: "pointer",
+                }}
+              >
                 <p>
-                  <strong>Oppdragsgiver:</strong> {notice.buyer}
+                  <strong>Tittel:</strong> {notice.title || "Ukjent"}
                 </p>
-              )}
-              {notice.typeAnnouncement && (
-                <p>
-                  <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
-                </p>
-              )}
-              {notice.announcementSubtype && (
-                <p>
-                  <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
-                </p>
-              )}
-              {notice.description && (
-                <p>
-                  <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
-                </p>
-              )}
-              {notice.location && (
-                <p>
-                  <strong>Sted:</strong> {notice.location}
-                </p>
-              )}
-              {notice.estValue && (
-                <p>
-                  <strong>Estimert verdi:</strong> {notice.estValue}
-                </p>
-              )}
-              {notice.publicationDate && (
-                <p>
-                  <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
-                </p>
-              )}
-              {notice.deadline && (
-                <p>
-                  <strong>Frist:</strong> {notice.deadline}
-                </p>
-              )}
-              {notice.eoes && (
-                <p>
-                  <strong>EØS:</strong> {notice.eoes}
-                </p>
-              )}
-              {notice.link && (
-                <p>
-                  <a href={notice.link} target="_blank" rel="noopener noreferrer">
-                    Se mer informasjon
-                  </a>
-                </p>
-              )}
-            </div>
-          ))}
+                {notice.buyer && (
+                  <p>
+                    <strong>Oppdragsgiver:</strong> {notice.buyer}
+                  </p>
+                )}
+                {notice.typeAnnouncement && (
+                  <p>
+                    <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+                  </p>
+                )}
+                {notice.announcementSubtype && (
+                  <p>
+                    <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+                  </p>
+                )}
+                {notice.description && (
+                  <p>
+                    <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+                  </p>
+                )}
+                {notice.location && (
+                  <p>
+                    <strong>Sted:</strong> {notice.location}
+                  </p>
+                )}
+                {notice.estValue && (
+                  <p>
+                    <strong>Estimert verdi:</strong> {notice.estValue}
+                  </p>
+                )}
+                {notice.publicationDate && (
+                  <p>
+                    <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+                  </p>
+                )}
+                {notice.deadline && (
+                  <p>
+                    <strong>Frist:</strong> {notice.deadline}
+                  </p>
+                )}
+                {notice.eoes && (
+                  <p>
+                    <strong>EØS:</strong> {notice.eoes}
+                  </p>
+                )}
+                {notice.link && (
+                  <p>
+                    <a href={notice.link} target="_blank" rel="noopener noreferrer">
+                      Se mer informasjon
+                    </a>
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
+      )}
+      {/* Кнопка-стрелочка вверх для прокрутки контейнера списка к началу */}
+      {notices.length > 0 && (
+        <button
+          onClick={scrollListToTop}
+          style={{
+            position: "fixed",
+            bottom: "20px",
+            right: "20px",
+            background: "linear-gradient(145deg, #2196F3, #1976D2)",
+            border: "none",
+            borderRadius: "50%",
+            width: "50px",
+            height: "50px",
+            minWidth: "50px",
+            minHeight: "50px",
+            fontSize: "28px",
+            lineHeight: "1",
+            color: "#fff",
+            boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: "0",
+          }}
+        >
+          ↑
+        </button>
       )}
     </div>
   );
 });
 
 export default DynamicListComponent;
+
+
+
+
+// import React, {
+//   useState,
+//   useRef,
+//   useImperativeHandle,
+//   forwardRef,
+//   useEffect,
+// } from "react";
+
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// function getTruncatedName(location) {
+//   const buyer = location.buyer || location.Oppdragsgiver;
+//   if (buyer) {
+//     const cleanText = buyer.replace(/[-–—]/g, " ");
+//     const words = cleanText.trim().split(/\s+/);
+//     return words.slice(0, 2).join(" ");
+//   }
+//   return "unknown";
+// }
+
+// const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL }, ref) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+//   const [cpvCode, setCpvCode] = useState("45000000");
+//   const [filterValue, setFilterValue] = useState(""); // Состояние выбранного фильтра
+//   const listRefs = useRef([]);
+//   const listContainerRef = useRef(null);
+
+//   useImperativeHandle(ref, () => ({
+//     scrollToTender: (index) => {
+//       if (listRefs.current[index]) {
+//         listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//       }
+//     },
+//   }));
+
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate, cpv: cpvCode });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = apiURL;
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body,
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Вычисляем полный список локаций для карты
+//       const fullLocations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data",
+//       }));
+//       setLocations(fullLocations);
+//     } catch (e) {
+//       console.error("Feil ved lasting av data:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   // При изменении фильтра или списка аукционов обновляем данные для карты
+//   useEffect(() => {
+//     const filteredNotices = filterValue
+//       ? notices.filter((notice) => getTruncatedName(notice) === filterValue)
+//       : notices;
+//     const filteredLocations = filteredNotices.map((notice) => ({
+//       name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//       buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//       nutsCode: notice.nutsCode || "Ingen data",
+//       country: notice.country || "Ingen data",
+//     }));
+//     setLocations(filteredLocations);
+//   }, [filterValue, notices, setLocations]);
+
+//   // Вычисляем данные для отображения в списке на основе выбранного фильтра
+//   const displayedNotices = filterValue
+//     ? notices.filter((notice) => getTruncatedName(notice) === filterValue)
+//     : notices;
+
+//   // Опции фильтра формируются из уникальных значений, полученных посредством getTruncatedName
+//   const filterOptions = Array.from(new Set(notices.map((notice) => getTruncatedName(notice)))).sort();
+
+//   const handleItemClick = (index) => {
+//     if (listRefs.current[index]) {
+//       listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//     }
+//   };
+
+//   // Обработчик для стрелочки – прокручивает контейнер списка к началу
+//   const scrollListToTop = () => {
+//     if (listContainerRef.current) {
+//       listContainerRef.current.scrollTo({ top: 0, behavior: "smooth" });
+//     }
+//   };
+
+//   return (
+//     <div style={{ padding: "20px", background: "#f7f9fa", minHeight: "100vh" }}>
+//       <h2>Anbud</h2>
+//       {/* Контрольная панель */}
+//       <div style={{ marginBottom: "20px", display: "flex", flexDirection: "column", gap: "10px" }}>
+//         {/* Чекбоксы для выбора режима скрапинга */}
+//         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useScraping}
+//               onChange={() => {
+//                 setUseScraping((v) => !v);
+//                 if (useDoffinScraping) setUseDoffinScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk TED-nettskraping
+//           </label>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useDoffinScraping}
+//               onChange={() => {
+//                 setUseDoffinScraping((v) => !v);
+//                 if (useScraping) setUseScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk Doffin-databasen
+//           </label>
+//         </div>
+//         {useDoffinScraping && (
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="cpv" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               CPV kode og ord:
+//             </label>
+//             <input
+//               id="cpv"
+//               type="text"
+//               value={cpvCode}
+//               onChange={(e) => setCpvCode(e.target.value)}
+//               placeholder="f.eks. 45000000,48000000"
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc",
+//                 width: "180px",
+//               }}
+//             />
+//           </div>
+//         )}
+//         {/* Поля выбора дат */}
+//         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="fromDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Fra dato:
+//             </label>
+//             <input
+//               id="fromDate"
+//               type="date"
+//               value={pendingFromDate}
+//               onChange={(e) => setPendingFromDate(e.target.value)}
+//               onBlur={() => setFromDate(pendingFromDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc",
+//               }}
+//             />
+//           </div>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="toDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Til dato:
+//             </label>
+//             <input
+//               id="toDate"
+//               type="date"
+//               value={pendingToDate}
+//               onChange={(e) => setPendingToDate(e.target.value)}
+//               onBlur={() => setToDate(pendingToDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc",
+//               }}
+//             />
+//           </div>
+//         </div>
+//         {/* Новый фильтр – селект, который появляется после скрапинга */}
+//         {notices.length > 0 && (
+//           <div
+//             style={{
+//               display: "flex",
+//               flexDirection: "row",
+//               flexWrap: "wrap",
+//               alignItems: "center",
+//               gap: "10px",
+//             }}
+//           >
+//             <label htmlFor="filterSelect" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Filtrer etter oppdragsgiver:
+//             </label>
+//             <select
+//               id="filterSelect"
+//               value={filterValue}
+//               onChange={(e) => setFilterValue(e.target.value)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc",
+//                 width: "100%",
+//                 maxWidth: "300px",
+//               }}
+//             >
+//               <option value="">Alle</option>
+//               {filterOptions.map((opt) => (
+//                 <option key={opt} value={opt}>
+//                   {opt}
+//                 </option>
+//               ))}
+//             </select>
+//           </div>
+//         )}
+//         <div style={{ display: "flex", justifyContent: "center" }}>
+//           <button
+//             style={{
+//               background: "linear-gradient(145deg, #1976d2, #0d47a1)",
+//               border: "none",
+//               borderRadius: "10px",
+//               boxShadow: "2px 2px 4px rgba(25, 118, 210, 0.05)",
+//               color: "#fff",
+//               fontWeight: "bold",
+//               fontSize: "16px",
+//               padding: "12px 24px",
+//               cursor: loading ? "not-allowed" : "pointer",
+//               transition: "all 0.2s",
+//             }}
+//             onClick={handleLoad}
+//             disabled={loading || !fromDate || !toDate}
+//           >
+//             Last inn
+//           </button>
+//         </div>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         // Оборачиваем список в контейнер с фиксированной максимальной высотой и вертикальной прокруткой
+//         <div
+//           ref={listContainerRef}
+//           style={{
+//             maxHeight: "70vh",
+//             overflowY: "auto",
+//             paddingRight: "10px" // чтобы не обрезался скроллбар
+//           }}
+//         >
+//           <div
+//             style={{
+//               display: "grid",
+//               gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//               gap: "24px",
+//               width: "100%",
+//             }}
+//           >
+//             {displayedNotices.map((notice, index) => (
+//               <div
+//                 key={index}
+//                 ref={(el) => (listRefs.current[index] = el)}
+//                 onClick={() => handleItemClick(index)}
+//                 style={{
+//                   border: "1.5px solid #d1e3f6",
+//                   borderRadius: "10px",
+//                   background: activeTender === index ? "#e0e0e0" : "#fff",
+//                   boxShadow:
+//                     activeTender === index
+//                       ? "0 2px 8px rgba(25, 118, 210, 0.2)"
+//                       : "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                   padding: "18px 22px",
+//                   display: "flex",
+//                   flexDirection: "column",
+//                   justifyContent: "space-between",
+//                   height: "100%",
+//                   transition: "box-shadow 0.2s",
+//                   wordBreak: "break-word",
+//                   cursor: "pointer",
+//                 }}
+//               >
+//                 <p>
+//                   <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//                 </p>
+//                 {notice.buyer && (
+//                   <p>
+//                     <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                   </p>
+//                 )}
+//                 {notice.typeAnnouncement && (
+//                   <p>
+//                     <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+//                   </p>
+//                 )}
+//                 {notice.announcementSubtype && (
+//                   <p>
+//                     <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+//                   </p>
+//                 )}
+//                 {notice.description && (
+//                   <p>
+//                     <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                   </p>
+//                 )}
+//                 {notice.location && (
+//                   <p>
+//                     <strong>Sted:</strong> {notice.location}
+//                   </p>
+//                 )}
+//                 {notice.estValue && (
+//                   <p>
+//                     <strong>Estimert verdi:</strong> {notice.estValue}
+//                   </p>
+//                 )}
+//                 {notice.publicationDate && (
+//                   <p>
+//                     <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                   </p>
+//                 )}
+//                 {notice.deadline && (
+//                   <p>
+//                     <strong>Frist:</strong> {notice.deadline}
+//                   </p>
+//                 )}
+//                 {notice.eoes && (
+//                   <p>
+//                     <strong>EØS:</strong> {notice.eoes}
+//                   </p>
+//                 )}
+//                 {notice.link && (
+//                   <p>
+//                     <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                       Se mer informasjon
+//                     </a>
+//                   </p>
+//                 )}
+//               </div>
+//             ))}
+//           </div>
+//         </div>
+//       )}
+//       {/* Кнопка-стрелочка вверх для прокрутки контейнера списка к началу */}
+//       {notices.length > 0 && (
+//         <button
+//           onClick={scrollListToTop}
+//           style={{
+//             position: "fixed",
+//             bottom: "20px",
+//             right: "20px",
+//             background: "linear-gradient(145deg, #2196F3, #1976D2)",
+//             border: "none",
+//             borderRadius: "50%",
+//             width: "50px",
+//             height: "50px",
+//             minWidth: "50px",
+//             minHeight: "50px",
+//             fontSize: "28px",
+//             lineHeight: "1",
+//             color: "#fff",
+//             boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
+//             cursor: "pointer",
+//             display: "flex",
+//             alignItems: "center",
+//             justifyContent: "center",
+//             zIndex: 1000,
+//             padding: "0",
+//           }}
+//         >
+//           ↑
+//         </button>
+//       )}
+//     </div>
+//   );
+// });
+
+// export default DynamicListComponent;
+
+
+
+// import React, { useState, useRef, useImperativeHandle, forwardRef, useEffect } from "react";
+
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// function getTruncatedName(location) {
+//   const buyer = location.buyer || location.Oppdragsgiver;
+//   if (buyer) {
+//     const cleanText = buyer.replace(/[-–—]/g, " ");
+//     const words = cleanText.trim().split(/\s+/);
+//     return words.slice(0, 2).join(" ");
+//   }
+//   return "unknown";
+// }
+
+// const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL }, ref) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+//   const [cpvCode, setCpvCode] = useState("45000000");
+//   const [filterValue, setFilterValue] = useState(""); // Состояние выбранного фильтра
+//   const listRefs = useRef([]);
+//   const listContainerRef = useRef(null);
+
+//   useImperativeHandle(ref, () => ({
+//     scrollToTender: (index) => {
+//       if (listRefs.current[index]) {
+//         listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//       }
+//     }
+//   }));
+
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate, cpv: cpvCode });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = apiURL;
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Вычисляем полный список локаций для карты
+//       const fullLocations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data"
+//       }));
+//       setLocations(fullLocations);
+//     } catch (e) {
+//       console.error("Feil ved lasting av data:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   // При изменении фильтра или списка аукционов обновляем данные для карты
+//   useEffect(() => {
+//     const filteredNotices = filterValue
+//       ? notices.filter((notice) => getTruncatedName(notice) === filterValue)
+//       : notices;
+//     const filteredLocations = filteredNotices.map((notice) => ({
+//       name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//       buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//       nutsCode: notice.nutsCode || "Ingen data",
+//       country: notice.country || "Ingen data"
+//     }));
+//     setLocations(filteredLocations);
+//   }, [filterValue, notices, setLocations]);
+
+//   // Вычисляем данные для отображения в списке на основе выбранного фильтра
+//   const displayedNotices = filterValue
+//     ? notices.filter((notice) => getTruncatedName(notice) === filterValue)
+//     : notices;
+
+//   // Опции фильтра формируются из уникальных значений, полученных посредством getTruncatedName
+//   const filterOptions = Array.from(new Set(notices.map((notice) => getTruncatedName(notice)))).sort();
+
+//   const handleItemClick = (index) => {
+//     if (listRefs.current[index]) {
+//       listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//     }
+//   };
+
+//   // Обработчик для стрелочки - прокручивает контейнер списка к началу
+//   const scrollListToTop = () => {
+//     if (listContainerRef.current) {
+//       listContainerRef.current.scrollTo({ top: 0, behavior: "smooth" });
+//     }
+//   };
+
+//   return (
+//     <div style={{ padding: "20px", background: "#f7f9fa", minHeight: "100vh" }}>
+//       <h2>Anbud</h2>
+//       {/* Контрольная панель */}
+//       <div style={{ marginBottom: "20px", display: "flex", flexDirection: "column", gap: "10px" }}>
+//         {/* Чекбоксы для выбора режима скрапинга */}
+//         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useScraping}
+//               onChange={() => {
+//                 setUseScraping((v) => !v);
+//                 if (useDoffinScraping) setUseDoffinScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk TED-nettskraping
+//           </label>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useDoffinScraping}
+//               onChange={() => {
+//                 setUseDoffinScraping((v) => !v);
+//                 if (useScraping) setUseScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk Doffin-databasen
+//           </label>
+//         </div>
+//         {useDoffinScraping && (
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="cpv" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               CPV kode:
+//             </label>
+//             <input
+//               id="cpv"
+//               type="text"
+//               value={cpvCode}
+//               onChange={(e) => setCpvCode(e.target.value)}
+//               placeholder="f.eks. 45000000,48000000"
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc",
+//                 width: "180px"
+//               }}
+//             />
+//           </div>
+//         )}
+//         {/* Поля выбора дат */}
+//         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="fromDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Fra dato:
+//             </label>
+//             <input
+//               id="fromDate"
+//               type="date"
+//               value={pendingFromDate}
+//               onChange={(e) => setPendingFromDate(e.target.value)}
+//               onBlur={() => setFromDate(pendingFromDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc"
+//               }}
+//             />
+//           </div>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="toDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Til dato:
+//             </label>
+//             <input
+//               id="toDate"
+//               type="date"
+//               value={pendingToDate}
+//               onChange={(e) => setPendingToDate(e.target.value)}
+//               onBlur={() => setToDate(pendingToDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc"
+//               }}
+//             />
+//           </div>
+//         </div>
+//         {/* Новый фильтр – селект, который появляется после скрапинга */}
+//         {notices.length > 0 && (
+//           <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="filterSelect" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Filtrer etter oppdragsgiver:
+//             </label>
+//             <select
+//               id="filterSelect"
+//               value={filterValue}
+//               onChange={(e) => setFilterValue(e.target.value)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc",
+//                 width: "auto",
+//                 display: "inline-block"
+//               }}
+//             >
+//               <option value="">Alle</option>
+//               {filterOptions.map((opt) => (
+//                 <option key={opt} value={opt}>
+//                   {opt}
+//                 </option>
+//               ))}
+//             </select>
+//           </div>
+//         )}
+//         <div style={{ display: "flex", justifyContent: "center" }}>
+//           <button
+//             style={{
+//               background: "linear-gradient(145deg, #1976d2, #0d47a1)",
+//               border: "none",
+//               borderRadius: "10px",
+//               boxShadow: "2px 2px 4px rgba(25, 118, 210, 0.05)",
+//               color: "#fff",
+//               fontWeight: "bold",
+//               fontSize: "16px",
+//               padding: "12px 24px",
+//               cursor: loading ? "not-allowed" : "pointer",
+//               transition: "all 0.2s"
+//             }}
+//             onClick={handleLoad}
+//             disabled={loading || !fromDate || !toDate}
+//           >
+//             Last inn
+//           </button>
+//         </div>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         // Оборачиваем список в контейнер с фиксированной максимальной высотой и вертикальной прокруткой
+//         <div
+//           ref={listContainerRef}
+//           style={{
+//             maxHeight: "70vh",
+//             overflowY: "auto",
+//             paddingRight: "10px" // чтобы не было обрезания скроллбара
+//           }}
+//         >
+//           <div
+//             style={{
+//               display: "grid",
+//               gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//               gap: "24px",
+//               width: "100%"
+//             }}
+//           >
+//             {displayedNotices.map((notice, index) => (
+//               <div
+//                 key={index}
+//                 ref={(el) => (listRefs.current[index] = el)}
+//                 onClick={() => handleItemClick(index)}
+//                 style={{
+//                   border: "1.5px solid #d1e3f6",
+//                   borderRadius: "10px",
+//                   background: activeTender === index ? "#e0e0e0" : "#fff",
+//                   boxShadow:
+//                     activeTender === index
+//                       ? "0 2px 8px rgba(25, 118, 210, 0.2)"
+//                       : "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                   padding: "18px 22px",
+//                   display: "flex",
+//                   flexDirection: "column",
+//                   justifyContent: "space-between",
+//                   height: "100%",
+//                   transition: "box-shadow 0.2s",
+//                   wordBreak: "break-word",
+//                   cursor: "pointer"
+//                 }}
+//               >
+//                 <p>
+//                   <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//                 </p>
+//                 {notice.buyer && (
+//                   <p>
+//                     <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                   </p>
+//                 )}
+//                 {notice.typeAnnouncement && (
+//                   <p>
+//                     <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+//                   </p>
+//                 )}
+//                 {notice.announcementSubtype && (
+//                   <p>
+//                     <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+//                   </p>
+//                 )}
+//                 {notice.description && (
+//                   <p>
+//                     <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                   </p>
+//                 )}
+//                 {notice.location && (
+//                   <p>
+//                     <strong>Sted:</strong> {notice.location}
+//                   </p>
+//                 )}
+//                 {notice.estValue && (
+//                   <p>
+//                     <strong>Estimert verdi:</strong> {notice.estValue}
+//                   </p>
+//                 )}
+//                 {notice.publicationDate && (
+//                   <p>
+//                     <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                   </p>
+//                 )}
+//                 {notice.deadline && (
+//                   <p>
+//                     <strong>Frist:</strong> {notice.deadline}
+//                   </p>
+//                 )}
+//                 {notice.eoes && (
+//                   <p>
+//                     <strong>EØS:</strong> {notice.eoes}
+//                   </p>
+//                 )}
+//                 {notice.link && (
+//                   <p>
+//                     <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                       Se mer informasjon
+//                     </a>
+//                   </p>
+//                 )}
+//               </div>
+//             ))}
+//           </div>
+//         </div>
+//       )}
+//       {/* Красивая кнопка-стрелочка вверх для прокрутки списка */}
+//       {notices.length > 0 && (
+//         <button
+//           onClick={scrollListToTop}
+//           style={{
+//             position: "fixed",
+//             bottom: "20px",
+//             right: "20px",
+//             background: "linear-gradient(145deg, #2196F3, #1976D2)",
+//             border: "none",
+//             borderRadius: "50%",
+//             width: "50px",
+//             height: "50px",
+//             fontSize: "28px",
+//             color: "#fff",
+//             boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
+//             cursor: "pointer",
+//             display: "flex",
+//             alignItems: "center",
+//             justifyContent: "center",
+//             zIndex: 1000
+//           }}
+//         >
+//           ↑
+//         </button>
+//       )}
+//     </div>
+//   );
+// });
+
+// export default DynamicListComponent;
+
+
+
+
+// import React, { useState, useRef, useImperativeHandle, forwardRef, useEffect } from "react";
+
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// function getTruncatedName(location) {
+//   const buyer = location.buyer || location.Oppdragsgiver;
+//   if (buyer) {
+//     const cleanText = buyer.replace(/[-–—]/g, " ");
+//     const words = cleanText.trim().split(/\s+/);
+//     return words.slice(0, 2).join(" ");
+//   }
+//   return "unknown";
+// }
+
+// const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL }, ref) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+//   const [cpvCode, setCpvCode] = useState("45000000");
+//   const [filterValue, setFilterValue] = useState(""); // Состояние выбранного фильтра
+//   const listRefs = useRef([]);
+
+//   useImperativeHandle(ref, () => ({
+//     scrollToTender: (index) => {
+//       if (listRefs.current[index]) {
+//         listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//       }
+//     }
+//   }));
+
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate, cpv: cpvCode });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = apiURL;
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Вычисляем полный список локаций для карты
+//       const fullLocations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data"
+//       }));
+//       setLocations(fullLocations);
+//     } catch (e) {
+//       console.error("Feil ved lasting av data:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   // При изменении фильтра или списка аукционов обновляем данные для карты
+//   useEffect(() => {
+//     const filteredNotices = filterValue
+//       ? notices.filter((notice) => getTruncatedName(notice) === filterValue)
+//       : notices;
+//     const filteredLocations = filteredNotices.map((notice) => ({
+//       name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//       buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//       nutsCode: notice.nutsCode || "Ingen data",
+//       country: notice.country || "Ingen data"
+//     }));
+//     setLocations(filteredLocations);
+//   }, [filterValue, notices, setLocations]);
+
+//   // Вычисляем данные для отображения в списке на основе выбранного фильтра
+//   const displayedNotices = filterValue
+//     ? notices.filter((notice) => getTruncatedName(notice) === filterValue)
+//     : notices;
+
+//   // Опции фильтра формируются из уникальных значений, полученных посредством getTruncatedName
+//   const filterOptions = Array.from(new Set(notices.map((notice) => getTruncatedName(notice)))).sort();
+
+//   const handleItemClick = (index) => {
+//     if (listRefs.current[index]) {
+//       listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//     }
+//   };
+
+//   return (
+//     <div style={{ padding: "20px", background: "#f7f9fa", minHeight: "100vh" }}>
+//       <h2>Anbud</h2>
+//       {/* Контрольная панель */}
+//       <div style={{ marginBottom: "20px", display: "flex", flexDirection: "column", gap: "10px" }}>
+//         {/* Чекбоксы для выбора режима скрапинга */}
+//         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useScraping}
+//               onChange={() => {
+//                 setUseScraping((v) => !v);
+//                 if (useDoffinScraping) setUseDoffinScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk TED-nettskraping
+//           </label>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useDoffinScraping}
+//               onChange={() => {
+//                 setUseDoffinScraping((v) => !v);
+//                 if (useScraping) setUseScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk Doffin-databasen
+//           </label>
+//         </div>
+//         {useDoffinScraping && (
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="cpv" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               CPV kode:
+//             </label>
+//             <input
+//               id="cpv"
+//               type="text"
+//               value={cpvCode}
+//               onChange={(e) => setCpvCode(e.target.value)}
+//               placeholder="f.eks. 45000000,48000000"
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc",
+//                 width: "180px"
+//               }}
+//             />
+//           </div>
+//         )}
+//         {/* Поля выбора дат */}
+//         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="fromDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Fra dato:
+//             </label>
+//             <input
+//               id="fromDate"
+//               type="date"
+//               value={pendingFromDate}
+//               onChange={(e) => setPendingFromDate(e.target.value)}
+//               onBlur={() => setFromDate(pendingFromDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc"
+//               }}
+//             />
+//           </div>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="toDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Til dato:
+//             </label>
+//             <input
+//               id="toDate"
+//               type="date"
+//               value={pendingToDate}
+//               onChange={(e) => setPendingToDate(e.target.value)}
+//               onBlur={() => setToDate(pendingToDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc"
+//               }}
+//             />
+//           </div>
+//         </div>
+//         {/* Новый фильтр — селект, который появляется после скрапинга */}
+//         {notices.length > 0 && (
+//           <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="filterSelect" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Filtrer etter oppdragsgiver:
+//             </label>
+//             <select
+//               id="filterSelect"
+//               value={filterValue}
+//               onChange={(e) => setFilterValue(e.target.value)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc",
+//                 width: "auto",       // динамическая ширина
+//                 display: "inline-block"
+//               }}
+//             >
+//               <option value="">Alle</option>
+//               {filterOptions.map((opt) => (
+//                 <option key={opt} value={opt}>
+//                   {opt}
+//                 </option>
+//               ))}
+//             </select>
+//           </div>
+//         )}
+//         <div style={{ display: "flex", justifyContent: "center" }}>
+//           <button
+//             style={{
+//               background: "linear-gradient(145deg, #1976d2, #0d47a1)",
+//               border: "none",
+//               borderRadius: "10px",
+//               boxShadow: "2px 2px 4px rgba(25, 118, 210, 0.05)",
+//               color: "#fff",
+//               fontWeight: "bold",
+//               fontSize: "16px",
+//               padding: "12px 24px",
+//               cursor: loading ? "not-allowed" : "pointer",
+//               transition: "all 0.2s"
+//             }}
+//             onClick={handleLoad}
+//             disabled={loading || !fromDate || !toDate}
+//           >
+//             Last inn
+//           </button>
+//         </div>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div
+//           style={{
+//             display: "grid",
+//             gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//             gap: "24px",
+//             width: "100%"
+//           }}
+//         >
+//           {displayedNotices.map((notice, index) => (
+//             <div
+//               key={index}
+//               ref={(el) => (listRefs.current[index] = el)}
+//               onClick={() => handleItemClick(index)}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: activeTender === index ? "#e0e0e0" : "#fff",
+//                 boxShadow:
+//                   activeTender === index
+//                     ? "0 2px 8px rgba(25, 118, 210, 0.2)"
+//                     : "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//                 cursor: "pointer"
+//               }}
+//             >
+//               <p>
+//                 <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//               </p>
+//               {notice.buyer && (
+//                 <p>
+//                   <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                 </p>
+//               )}
+//               {notice.typeAnnouncement && (
+//                 <p>
+//                   <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+//                 </p>
+//               )}
+//               {notice.announcementSubtype && (
+//                 <p>
+//                   <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+//                 </p>
+//               )}
+//               {notice.description && (
+//                 <p>
+//                   <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.location && (
+//                 <p>
+//                   <strong>Sted:</strong> {notice.location}
+//                 </p>
+//               )}
+//               {notice.estValue && (
+//                 <p>
+//                   <strong>Estimert verdi:</strong> {notice.estValue}
+//                 </p>
+//               )}
+//               {notice.publicationDate && (
+//                 <p>
+//                   <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.deadline && (
+//                 <p>
+//                   <strong>Frist:</strong> {notice.deadline}
+//                 </p>
+//               )}
+//               {notice.eoes && (
+//                 <p>
+//                   <strong>EØS:</strong> {notice.eoes}
+//                 </p>
+//               )}
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     Se mer informasjon
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// });
+
+// export default DynamicListComponent;
+
+
+
+// import React, { useState, useRef, useImperativeHandle, forwardRef, useEffect } from "react";
+
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// function getTruncatedName(location) {
+//   const buyer = location.buyer || location.Oppdragsgiver;
+//   if (buyer) {
+//     const cleanText = buyer.replace(/[-–—]/g, " ");
+//     const words = cleanText.trim().split(/\s+/);
+//     return words.slice(0, 2).join(" ");
+//   }
+//   return "unknown";
+// }
+
+// const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL }, ref) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+//   const [cpvCode, setCpvCode] = useState("45000000");
+//   const [filterValue, setFilterValue] = useState(""); // Состояние выбранного фильтра
+//   const listRefs = useRef([]);
+
+//   useImperativeHandle(ref, () => ({
+//     scrollToTender: (index) => {
+//       if (listRefs.current[index]) {
+//         listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//       }
+//     }
+//   }));
+
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate, cpv: cpvCode });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = apiURL;
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Вычисляем полный список локаций для карты
+//       const fullLocations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data"
+//       }));
+//       setLocations(fullLocations);
+//     } catch (e) {
+//       console.error("Feil ved lasting av data:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   // При изменении фильтра или списка аукционов обновляем данные для карты
+//   useEffect(() => {
+//     const filteredNotices = filterValue
+//       ? notices.filter((notice) => getTruncatedName(notice) === filterValue)
+//       : notices;
+//     const filteredLocations = filteredNotices.map((notice) => ({
+//       name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//       buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//       nutsCode: notice.nutsCode || "Ingen data",
+//       country: notice.country || "Ingen data"
+//     }));
+//     setLocations(filteredLocations);
+//   }, [filterValue, notices, setLocations]);
+
+//   // Вычисляем данные для отображения в списке на основе выбранного фильтра
+//   const displayedNotices = filterValue
+//     ? notices.filter((notice) => getTruncatedName(notice) === filterValue)
+//     : notices;
+
+//   // Опции фильтра формируются из уникальных значений, полученных посредством getTruncatedName
+//   const filterOptions = Array.from(new Set(notices.map((notice) => getTruncatedName(notice)))).sort();
+
+//   const handleItemClick = (index) => {
+//     if (listRefs.current[index]) {
+//       listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//     }
+//   };
+
+//   return (
+//     <div style={{ padding: "20px", background: "#f7f9fa", minHeight: "100vh" }}>
+//       <h2>Anbud</h2>
+//       {/* Контрольная панель */}
+//       <div style={{ marginBottom: "20px", display: "flex", flexDirection: "column", gap: "10px" }}>
+//         {/* Чекбоксы для выбора режима скрапинга */}
+//         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useScraping}
+//               onChange={() => {
+//                 setUseScraping((v) => !v);
+//                 if (useDoffinScraping) setUseDoffinScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk TED-nettskraping
+//           </label>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useDoffinScraping}
+//               onChange={() => {
+//                 setUseDoffinScraping((v) => !v);
+//                 if (useScraping) setUseScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk Doffin-databasen
+//           </label>
+//         </div>
+//         {useDoffinScraping && (
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="cpv" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               CPV kode:
+//             </label>
+//             <input
+//               id="cpv"
+//               type="text"
+//               value={cpvCode}
+//               onChange={(e) => setCpvCode(e.target.value)}
+//               placeholder="f.eks. 45000000,48000000"
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc",
+//                 width: "180px"
+//               }}
+//             />
+//           </div>
+//         )}
+//         {/* Поля выбора дат */}
+//         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="fromDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Fra dato:
+//             </label>
+//             <input
+//               id="fromDate"
+//               type="date"
+//               value={pendingFromDate}
+//               onChange={(e) => setPendingFromDate(e.target.value)}
+//               onBlur={() => setFromDate(pendingFromDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc"
+//               }}
+//             />
+//           </div>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="toDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Til dato:
+//             </label>
+//             <input
+//               id="toDate"
+//               type="date"
+//               value={pendingToDate}
+//               onChange={(e) => setPendingToDate(e.target.value)}
+//               onBlur={() => setToDate(pendingToDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc"
+//               }}
+//             />
+//           </div>
+//         </div>
+//         {/* Новый фильтр — селект, который появляется после скрапинга */}
+//         {notices.length > 0 && (
+//           <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="filterSelect" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Filtrer etter oppdragsgiver:
+//             </label>
+//             <select
+//               id="filterSelect"
+//               value={filterValue}
+//               onChange={(e) => setFilterValue(e.target.value)}
+//               style={{ padding: "6px", fontSize: "16px", borderRadius: "4px", border: "1px solid #ccc" }}
+//             >
+//               <option value="">Alle</option>
+//               {filterOptions.map((opt) => (
+//                 <option key={opt} value={opt}>
+//                   {opt}
+//                 </option>
+//               ))}
+//             </select>
+//           </div>
+//         )}
+//         <div style={{ display: "flex", justifyContent: "center" }}>
+//           <button
+//             style={{
+//               background: "linear-gradient(145deg, #1976d2, #0d47a1)",
+//               border: "none",
+//               borderRadius: "10px",
+//               boxShadow: "2px 2px 4px rgba(25, 118, 210, 0.05)",
+//               color: "#fff",
+//               fontWeight: "bold",
+//               fontSize: "16px",
+//               padding: "12px 24px",
+//               cursor: loading ? "not-allowed" : "pointer",
+//               transition: "all 0.2s"
+//             }}
+//             onClick={handleLoad}
+//             disabled={loading || !fromDate || !toDate}
+//           >
+//             Last inn
+//           </button>
+//         </div>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div
+//           style={{
+//             display: "grid",
+//             gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+//             gap: "24px",
+//             width: "100%"
+//           }}
+//         >
+//           {displayedNotices.map((notice, index) => (
+//             <div
+//               key={index}
+//               ref={(el) => (listRefs.current[index] = el)}
+//               onClick={() => handleItemClick(index)}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: activeTender === index ? "#e0e0e0" : "#fff",
+//                 boxShadow:
+//                   activeTender === index
+//                     ? "0 2px 8px rgba(25, 118, 210, 0.2)"
+//                     : "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//                 cursor: "pointer"
+//               }}
+//             >
+//               <p>
+//                 <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//               </p>
+//               {notice.buyer && (
+//                 <p>
+//                   <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                 </p>
+//               )}
+//               {notice.typeAnnouncement && (
+//                 <p>
+//                   <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+//                 </p>
+//               )}
+//               {notice.announcementSubtype && (
+//                 <p>
+//                   <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+//                 </p>
+//               )}
+//               {notice.description && (
+//                 <p>
+//                   <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.location && (
+//                 <p>
+//                   <strong>Sted:</strong> {notice.location}
+//                 </p>
+//               )}
+//               {notice.estValue && (
+//                 <p>
+//                   <strong>Estimert verdi:</strong> {notice.estValue}
+//                 </p>
+//               )}
+//               {notice.publicationDate && (
+//                 <p>
+//                   <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.deadline && (
+//                 <p>
+//                   <strong>Frist:</strong> {notice.deadline}
+//                 </p>
+//               )}
+//               {notice.eoes && (
+//                 <p>
+//                   <strong>EØS:</strong> {notice.eoes}
+//                 </p>
+//               )}
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     Se mer informasjon
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// });
+
+// export default DynamicListComponent;
+
+
+
+//работает с cpv// import React, { useState, useRef, useImperativeHandle, forwardRef } from "react";
+
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL }, ref) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+//   // В поле можно вводить несколько CPV-кодов, разделённых запятыми, например: "45000000,48000000"
+//   const [cpvCode, setCpvCode] = useState("45000000");
+
+//   // Создаём ref для каждого элемента списка
+//   const listRefs = useRef([]);
+
+//   // Императивный метод для прокрутки к выбранному элементу
+//   useImperativeHandle(ref, () => ({
+//     scrollToTender: (index) => {
+//       if (listRefs.current[index]) {
+//         listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//       }
+//     }
+//   }));
+
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         // Передаём значение CPV-кодов как есть (строка с запятыми)
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate, cpv: cpvCode });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = apiURL;
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Формируем массив локаций для карты
+//       const locations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data"
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Feil ved lasting av data:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   // При клике на элемент списка – прокручиваем к нему
+//   const handleItemClick = (index) => {
+//     if (listRefs.current[index]) {
+//       listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//     }
+//   };
+
+//   return (
+//     <div style={{ padding: "20px", background: "#f7f9fa", minHeight: "100vh" }}>
+//       <h2>Anbud</h2>
+//       {/* Контрольная панель */}
+//       <div style={{ marginBottom: "20px", display: "flex", flexDirection: "column", gap: "10px" }}>
+//         {/* Чекбоксы для выбора режима скрапинга */}
+//         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useScraping}
+//               onChange={() => {
+//                 setUseScraping((v) => !v);
+//                 if (useDoffinScraping) setUseDoffinScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk TED-nettskraping
+//           </label>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useDoffinScraping}
+//               onChange={() => {
+//                 setUseDoffinScraping((v) => !v);
+//                 if (useScraping) setUseScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk Doffin-databasen
+//           </label>
+//         </div>
+//         {/* Поле ввода CPV-кодов (можно ввести несколько через запятую) */}
+//         {useDoffinScraping && (
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="cpv" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               CPV kode:
+//             </label>
+//             <input
+//               id="cpv"
+//               type="text"
+//               value={cpvCode}
+//               onChange={(e) => setCpvCode(e.target.value)}
+//               placeholder="f.eks. 45000000,48000000"
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc",
+//                 width: "180px"
+//               }}
+//             />
+//           </div>
+//         )}
+//         {/* Поля выбора дат */}
+//         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="fromDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Fra dato:
+//             </label>
+//             <input
+//               id="fromDate"
+//               type="date"
+//               value={pendingFromDate}
+//               onChange={(e) => setPendingFromDate(e.target.value)}
+//               onBlur={() => setFromDate(pendingFromDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc"
+//               }}
+//             />
+//           </div>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="toDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Til dato:
+//             </label>
+//             <input
+//               id="toDate"
+//               type="date"
+//               value={pendingToDate}
+//               onChange={(e) => setPendingToDate(e.target.value)}
+//               onBlur={() => setToDate(pendingToDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc"
+//               }}
+//             />
+//           </div>
+//         </div>
+//         {/* Кнопка загрузки */}
+//         <div style={{ display: "flex", justifyContent: "center" }}>
+//           <button
+//             style={{
+//               background: "linear-gradient(145deg, #1976d2, #0d47a1)",
+//               border: "none",
+//               borderRadius: "10px",
+//               boxShadow: "2px 2px 4px rgba(25, 118, 210, 0.05)",
+//               color: "#fff",
+//               fontWeight: "bold",
+//               fontSize: "16px",
+//               padding: "12px 24px",
+//               cursor: loading ? "not-allowed" : "pointer",
+//               transition: "all 0.2s"
+//             }}
+//             onClick={handleLoad}
+//             disabled={loading || !fromDate || !toDate}
+//           >
+//             Last inn
+//           </button>
+//         </div>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px", width: "100%" }}>
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               ref={(el) => (listRefs.current[index] = el)}
+//               onClick={() => handleItemClick(index)}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: activeTender === index ? "#e0e0e0" : "#fff",
+//                 boxShadow:
+//                   activeTender === index
+//                     ? "0 2px 8px rgba(25, 118, 210, 0.2)"
+//                     : "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//                 cursor: "pointer"
+//               }}
+//             >
+//               <p>
+//                 <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//               </p>
+//               {notice.buyer && (
+//                 <p>
+//                   <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                 </p>
+//               )}
+//               {notice.typeAnnouncement && (
+//                 <p>
+//                   <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+//                 </p>
+//               )}
+//               {notice.announcementSubtype && (
+//                 <p>
+//                   <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+//                 </p>
+//               )}
+//               {notice.description && (
+//                 <p>
+//                   <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.location && (
+//                 <p>
+//                   <strong>Sted:</strong> {notice.location}
+//                 </p>
+//               )}
+//               {notice.estValue && (
+//                 <p>
+//                   <strong>Estimert verdi:</strong> {notice.estValue}
+//                 </p>
+//               )}
+//               {notice.publicationDate && (
+//                 <p>
+//                   <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.deadline && (
+//                 <p>
+//                   <strong>Frist:</strong> {notice.deadline}
+//                 </p>
+//               )}
+//               {notice.eoes && (
+//                 <p>
+//                   <strong>EØS:</strong> {notice.eoes}
+//                 </p>
+//               )}
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     Se mer informasjon
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// });
+
+// export default DynamicListComponent;
+
+
+
+
+//200% раб код// import React, { useState, useRef, useImperativeHandle, forwardRef } from "react";
+
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL }, ref) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+//   const [cpvCode, setCpvCode] = useState("45000000");
+
+//   // Создаем ref для каждого элемента списка
+//   const listRefs = useRef([]);
+
+//   // Императивный метод для прокрутки к выбранному элементу
+//   useImperativeHandle(ref, () => ({
+//     scrollToTender: (index) => {
+//       if (listRefs.current[index]) {
+//         listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//       }
+//     }
+//   }));
+
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate, cpv: cpvCode });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = apiURL;
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Формирование массива локаций для карты
+//       const locations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data"
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Feil ved lasting av data:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   // При клике на элемент списка – прокручиваем к нему
+//   const handleItemClick = (index) => {
+//     if (listRefs.current[index]) {
+//       listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//     }
+//   };
+
+//   return (
+//     <div style={{ padding: "20px", background: "#f7f9fa", minHeight: "100vh" }}>
+//       <h2>Anbud</h2>
+//       {/* Контрольная панель */}
+//       <div style={{ marginBottom: "20px", display: "flex", flexDirection: "column", gap: "10px" }}>
+//         {/* Колонка для чекбоксов */}
+//         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useScraping}
+//               onChange={() => {
+//                 setUseScraping((v) => !v);
+//                 if (useDoffinScraping) setUseDoffinScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk TED-nettskraping
+//           </label>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useDoffinScraping}
+//               onChange={() => {
+//                 setUseDoffinScraping((v) => !v);
+//                 if (useScraping) setUseScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk Doffin-databasen
+//           </label>
+//         </div>
+//         {/* Поле ввода для CPV-кода (показывается, если выбран Doffin) */}
+//         {useDoffinScraping && (
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="cpv" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               CPV kode:
+//             </label>
+//             <input
+//               id="cpv"
+//               type="text"
+//               value={cpvCode}
+//               onChange={(e) => setCpvCode(e.target.value)}
+//               placeholder="8-siffer"
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc",
+//                 width: "120px"
+//               }}
+//             />
+//           </div>
+//         )}
+//         {/* Поля для выбора дат */}
+//         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="fromDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Fra dato:
+//             </label>
+//             <input
+//               id="fromDate"
+//               type="date"
+//               value={pendingFromDate}
+//               onChange={(e) => setPendingFromDate(e.target.value)}
+//               onBlur={() => setFromDate(pendingFromDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc"
+//               }}
+//             />
+//           </div>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="toDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Til dato:
+//             </label>
+//             <input
+//               id="toDate"
+//               type="date"
+//               value={pendingToDate}
+//               onChange={(e) => setPendingToDate(e.target.value)}
+//               onBlur={() => setToDate(pendingToDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc"
+//               }}
+//             />
+//           </div>
+//         </div>
+//         {/* Центрированная кнопка "Last inn" */}
+//         <div style={{ display: "flex", justifyContent: "center" }}>
+//           <button
+//             style={{
+//               background: "linear-gradient(145deg, #1976d2, #0d47a1)",
+//               border: "none",
+//               borderRadius: "10px",
+//               boxShadow: "2px 2px 4px rgba(25, 118, 210, 0.05)",
+//               color: "#fff",
+//               fontWeight: "bold",
+//               fontSize: "16px",
+//               padding: "12px 24px",
+//               cursor: loading ? "not-allowed" : "pointer",
+//               transition: "all 0.2s"
+//             }}
+//             onClick={handleLoad}
+//             disabled={loading || !fromDate || !toDate}
+//           >
+//             Last inn
+//           </button>
+//         </div>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px", width: "100%" }}>
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               ref={(el) => (listRefs.current[index] = el)}
+//               onClick={() => handleItemClick(index)}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: activeTender === index ? "#e0e0e0" : "#fff",
+//                 boxShadow:
+//                   activeTender === index
+//                     ? "0 2px 8px rgba(25, 118, 210, 0.2)"
+//                     : "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//                 cursor: "pointer"
+//               }}
+//             >
+//               <p>
+//                 <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//               </p>
+//               {notice.buyer && (
+//                 <p>
+//                   <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                 </p>
+//               )}
+//               {notice.typeAnnouncement && (
+//                 <p>
+//                   <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+//                 </p>
+//               )}
+//               {notice.announcementSubtype && (
+//                 <p>
+//                   <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+//                 </p>
+//               )}
+//               {notice.description && (
+//                 <p>
+//                   <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.location && (
+//                 <p>
+//                   <strong>Sted:</strong> {notice.location}
+//                 </p>
+//               )}
+//               {notice.estValue && (
+//                 <p>
+//                   <strong>Estimert verdi:</strong> {notice.estValue}
+//                 </p>
+//               )}
+//               {notice.publicationDate && (
+//                 <p>
+//                   <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.deadline && (
+//                 <p>
+//                   <strong>Frist:</strong> {notice.deadline}
+//                 </p>
+//               )}
+//               {notice.eoes && (
+//                 <p>
+//                   <strong>EØS:</strong> {notice.eoes}
+//                 </p>
+//               )}
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     Se mer informasjon
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// });
+
+// export default DynamicListComponent;
+
+
+
+//100% раб код// import React, { useState, useRef, useImperativeHandle, forwardRef } from "react";
+
+// function extractText(val) {
+//   if (!val) return "";
+//   if (typeof val === "string") return val;
+//   if (typeof val === "object" && "#text" in val) return val["#text"];
+//   if (Array.isArray(val)) return val.map(extractText).join("; ");
+//   return "";
+// }
+
+// const DynamicListComponent = forwardRef(({ setLocations, activeTender, apiURL }, ref) => {
+//   const [notices, setNotices] = useState([]);
+//   const [fromDate, setFromDate] = useState("");
+//   const [toDate, setToDate] = useState("");
+//   const [pendingFromDate, setPendingFromDate] = useState("");
+//   const [pendingToDate, setPendingToDate] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const [useScraping, setUseScraping] = useState(false);
+//   const [useDoffinScraping, setUseDoffinScraping] = useState(false);
+
+//   // Oppretter ref for hvert element i listen
+//   const listRefs = useRef([]);
+
+//   // Impertativ metode for å rulle til valgt element
+//   useImperativeHandle(ref, () => ({
+//     scrollToTender: (index) => {
+//       if (listRefs.current[index]) {
+//         listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//       }
+//     }
+//   }));
+
+//   const handleLoad = async () => {
+//     if (!fromDate || !toDate) return;
+//     setLoading(true);
+//     try {
+//       let url, body;
+//       if (useDoffinScraping) {
+//         url = "http://localhost:4003/api/notices/doffin-scrape";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else if (useScraping) {
+//         url = "http://localhost:4002/api/notices/scrape-site";
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       } else {
+//         url = apiURL;
+//         body = JSON.stringify({ from: fromDate, to: toDate });
+//       }
+//       const response = await fetch(url, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body
+//       });
+//       const data = await response.json();
+//       setNotices(data.results || []);
+
+//       // Forming av et array med locations for kartet
+//       const locations = (data.results || []).map((notice) => ({
+//         name: extractText(notice["notice-title"]?.eng || notice.title) || "Ukjent",
+//         buyer: notice.buyer || notice.Oppdragsgiver || "Ikke spesifisert",
+//         nutsCode: notice.nutsCode || "Ingen data",
+//         country: notice.country || "Ingen data"
+//       }));
+//       setLocations(locations);
+//     } catch (e) {
+//       console.error("Feil ved lasting av data:", e);
+//       setNotices([]);
+//     }
+//     setLoading(false);
+//   };
+
+//   // Ved klikk på et listeelement – rull til det
+//   const handleItemClick = (index) => {
+//     if (listRefs.current[index]) {
+//       listRefs.current[index].scrollIntoView({ behavior: "smooth", block: "center" });
+//     }
+//   };
+
+//   return (
+//     <div style={{ padding: "20px", background: "#f7f9fa", minHeight: "100vh" }}>
+//       <h2>Anbud</h2>
+//       {/* Kontrollpanelet */}
+//       <div style={{ marginBottom: "20px", display: "flex", flexDirection: "column", gap: "10px" }}>
+//         {/* Kolonne for sjekkbokser */}
+//         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useScraping}
+//               onChange={() => {
+//                 setUseScraping((v) => !v);
+//                 if (useDoffinScraping) setUseDoffinScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk TED-nettskraping
+//           </label>
+//           <label style={{ fontSize: "16px", fontWeight: "500" }}>
+//             <input
+//               type="checkbox"
+//               checked={useDoffinScraping}
+//               onChange={() => {
+//                 setUseDoffinScraping((v) => !v);
+//                 if (useScraping) setUseScraping(false);
+//               }}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Bruk Doffin-databasen
+//           </label>
+//         </div>
+//         {/* Datoer vises i kolonne */}
+//         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="fromDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Fra dato:
+//             </label>
+//             <input
+//               id="fromDate"
+//               type="date"
+//               value={pendingFromDate}
+//               onChange={(e) => setPendingFromDate(e.target.value)}
+//               onBlur={() => setFromDate(pendingFromDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc"
+//               }}
+//             />
+//           </div>
+//           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+//             <label htmlFor="toDate" style={{ fontSize: "16px", fontWeight: "500" }}>
+//               Til dato:
+//             </label>
+//             <input
+//               id="toDate"
+//               type="date"
+//               value={pendingToDate}
+//               onChange={(e) => setPendingToDate(e.target.value)}
+//               onBlur={() => setToDate(pendingToDate)}
+//               style={{
+//                 padding: "6px",
+//                 fontSize: "16px",
+//                 borderRadius: "4px",
+//                 border: "1px solid #ccc"
+//               }}
+//             />
+//           </div>
+//         </div>
+//         {/* Sentrert knapp med redusert skyggeeffekt */}
+//         <div style={{ display: "flex", justifyContent: "center" }}>
+//           <button
+//             style={{
+//               background: "linear-gradient(145deg, #1976d2, #0d47a1)",
+//               border: "none",
+//               borderRadius: "10px",
+//               boxShadow: "2px 2px 4px rgba(25, 118, 210, 0.05)",
+//               color: "#fff",
+//               fontWeight: "bold",
+//               fontSize: "16px",
+//               padding: "12px 24px",
+//               cursor: loading ? "not-allowed" : "pointer",
+//               transition: "all 0.2s"
+//             }}
+//             onClick={handleLoad}
+//             disabled={loading || !fromDate || !toDate}
+//           >
+//             Last inn
+//           </button>
+//         </div>
+//       </div>
+//       {loading ? (
+//         <p>Laster...</p>
+//       ) : notices.length === 0 ? (
+//         <p>Ingen data å vise</p>
+//       ) : (
+//         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px", width: "100%" }}>
+//           {notices.map((notice, index) => (
+//             <div
+//               key={index}
+//               ref={(el) => (listRefs.current[index] = el)}
+//               onClick={() => handleItemClick(index)}
+//               style={{
+//                 border: "1.5px solid #d1e3f6",
+//                 borderRadius: "10px",
+//                 background: activeTender === index ? "#e0e0e0" : "#fff",
+//                 boxShadow:
+//                   activeTender === index
+//                     ? "0 2px 8px rgba(25, 118, 210, 0.2)"
+//                     : "0 2px 8px rgba(25, 118, 210, 0.04)",
+//                 padding: "18px 22px",
+//                 display: "flex",
+//                 flexDirection: "column",
+//                 justifyContent: "space-between",
+//                 height: "100%",
+//                 transition: "box-shadow 0.2s",
+//                 wordBreak: "break-word",
+//                 cursor: "pointer"
+//               }}
+//             >
+//               <p>
+//                 <strong>Tittel:</strong> {notice.title || "Ukjent"}
+//               </p>
+//               {notice.buyer && (
+//                 <p>
+//                   <strong>Oppdragsgiver:</strong> {notice.buyer}
+//                 </p>
+//               )}
+//               {notice.typeAnnouncement && (
+//                 <p>
+//                   <strong>Type kunngjøring:</strong> {notice.typeAnnouncement}
+//                 </p>
+//               )}
+//               {notice.announcementSubtype && (
+//                 <p>
+//                   <strong>Kunngjøringstype:</strong> {notice.announcementSubtype}
+//                 </p>
+//               )}
+//               {notice.description && (
+//                 <p>
+//                   <strong>Beskrivelse:</strong> {notice.description || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.location && (
+//                 <p>
+//                   <strong>Sted:</strong> {notice.location}
+//                 </p>
+//               )}
+//               {notice.estValue && (
+//                 <p>
+//                   <strong>Estimert verdi:</strong> {notice.estValue}
+//                 </p>
+//               )}
+//               {notice.publicationDate && (
+//                 <p>
+//                   <strong>Publiseringsdato:</strong> {notice.publicationDate || "Ingen data"}
+//                 </p>
+//               )}
+//               {notice.deadline && (
+//                 <p>
+//                   <strong>Frist:</strong> {notice.deadline}
+//                 </p>
+//               )}
+//               {notice.eoes && (
+//                 <p>
+//                   <strong>EØS:</strong> {notice.eoes}
+//                 </p>
+//               )}
+//               {notice.link && (
+//                 <p>
+//                   <a href={notice.link} target="_blank" rel="noopener noreferrer">
+//                     Se mer informasjon
+//                   </a>
+//                 </p>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// });
+
+// export default DynamicListComponent;
 
 
 

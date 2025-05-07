@@ -1,3 +1,6 @@
+
+
+
 import puppeteer from 'puppeteer';
 import express from 'express';
 import cors from 'cors';
@@ -9,7 +12,7 @@ app.use(cors());
 app.use(express.json());
 
 app.post('/api/notices/doffin-scrape', async (req, res) => {
-  const { from, to, location } = req.body;
+  const { from, to, location, cpv } = req.body;
 
   if (!from || !to) {
     return res.status(400).json({ error: 'Поля "from" и "to" обязательны для заполнения.' });
@@ -18,145 +21,147 @@ app.post('/api/notices/doffin-scrape', async (req, res) => {
   // Если регион не передан, используем стандартное значение
   const loc = location || 'NO020';
 
+  // Получаем CPV-коды из поля (например, "45000000,48000000")
+  const cpvInput = cpv || '45000000';
+  const cpvCodes = cpvInput.split(",").map(code => code.trim()).filter(Boolean);
+
   try {
+    // Запускаем браузер один раз
     const browser = await puppeteer.launch({ headless: false });
-    const page = await browser.newPage();
+    let overallTenders = [];
 
-    // Формируем базовый URL с выбранным диапазоном дат и регионом
-    const baseUrl = `https://www.doffin.no/search?searchString=45000000&fromDate=${from}&toDate=${to}&location=${loc}`;
-    const tenders = [];
-    let pageNumber = 1;
+    // Для каждого CPV-кода выполняем запрос к базе
+    for (const cpvCode of cpvCodes) {
+      const page = await browser.newPage();
+      // Формируем базовый URL для текущего CPV-кода
+      const baseUrl = `https://www.doffin.no/search?searchString=${encodeURIComponent(cpvCode)}&fromDate=${from}&toDate=${to}&location=${loc}`;
+      let tenders = [];
+      let pageNumber = 1;
 
-    // Функция автоскроллинга
-    async function autoScroll(page) {
-      await page.evaluate(async () => {
-        await new Promise((resolve) => {
-          let totalHeight = 0;
-          const distance = 100;
-          const timer = setInterval(() => {
-            const scrollHeight = document.body.scrollHeight;
-            window.scrollBy(0, distance);
-            totalHeight += distance;
-            if (totalHeight >= scrollHeight) {
-              clearInterval(timer);
-              resolve();
-            }
-          }, 200);
+      // Функция автоскроллинга
+      async function autoScroll(page) {
+        await page.evaluate(async () => {
+          await new Promise((resolve) => {
+            let totalHeight = 0;
+            const distance = 100;
+            const timer = setInterval(() => {
+              const scrollHeight = document.body.scrollHeight;
+              window.scrollBy(0, distance);
+              totalHeight += distance;
+              if (totalHeight >= scrollHeight) {
+                clearInterval(timer);
+                resolve();
+              }
+            }, 200);
+          });
         });
-      });
-    }
+      }
 
-    // Функция извлечения тендеров со страницы с дополнительными полями
-    const extractTenders = async () => {
-      return await page.$$eval('ul._result_list_dx2u4_58 > li', items =>
-        items.map(item => {
-          const title = item.querySelector('h2._title_1lwtt_26')?.textContent.trim();
-          const description = item.querySelector('p._ingress_1lwtt_33')?.textContent.trim();
-
-          // Извлечение ссылки и преобразование в абсолютный URL, если ссылка относительная
-          const rawLink = item.querySelector('a')?.getAttribute('href');
-          const link = rawLink && rawLink.startsWith('/') ? `https://www.doffin.no${rawLink}` : rawLink;
-
-          const dateElement = item.querySelector('p._issue_date_1lwtt_54') || 
-                              item.querySelector('p.альтернативный_класс');
-          const publicationDate = dateElement
-            ? (dateElement.textContent.trim().match(/\d{2}\.\d{2}\.\d{4}/) || [null])[0]
-            : null;
-          
-          // Обновлённое поле oppdragsgiver: объединяем все элементы с классом _buyer_1lwtt_16
-          const buyerElements = item.querySelectorAll('p._buyer_1lwtt_16');
-          const buyer = (buyerElements && buyerElements.length > 0)
-            ? Array.from(buyerElements).map(el => el.textContent.trim()).join(" | ")
-            : null;
-          
-          // Дополнительные поля: тип объявления (первый чип) и подтип (второй чип, если есть)
-          const chipElements = item.querySelectorAll('div._chipline_1gf9m_1 > p');
-          let typeAnnouncement = null;
-          let announcementSubtype = null;
-          if (chipElements && chipElements.length > 0) {
-            typeAnnouncement = chipElements[0].textContent.trim();
-            if (chipElements.length > 1) {
-              announcementSubtype = chipElements[1].textContent.trim();
+      // Функция извлечения тендеров со страницы
+      async function extractTenders() {
+        return await page.$$eval('ul._result_list_dx2u4_58 > li', items =>
+          items.map(item => {
+            const title = item.querySelector('h2._title_1lwtt_26')?.textContent.trim();
+            const description = item.querySelector('p._ingress_1lwtt_33')?.textContent.trim();
+            // Извлекаем ссылку: преобразуем относительный URL в абсолютный, если требуется
+            const rawLink = item.querySelector('a')?.getAttribute('href');
+            const link = rawLink && rawLink.startsWith('/') ? `https://www.doffin.no${rawLink}` : rawLink;
+            const dateElement = item.querySelector('p._issue_date_1lwtt_54') ||
+                                item.querySelector('p.альтернативный_класс');
+            const publicationDate = dateElement
+              ? (dateElement.textContent.trim().match(/\d{2}\.\d{2}\.\d{4}/) || [null])[0]
+              : null;
+            // Объединяем все элементы с классом _buyer_1lwtt_16 для oppdragsgiver
+            const buyerElements = item.querySelectorAll('p._buyer_1lwtt_16');
+            const buyer = (buyerElements && buyerElements.length > 0)
+              ? Array.from(buyerElements).map(el => el.textContent.trim()).join(" | ")
+              : null;
+            // Дополнительные поля: тип объявления (первый чип) и подтип (если есть второй)
+            const chipElements = item.querySelectorAll('div._chipline_1gf9m_1 > p');
+            let typeAnnouncement = null;
+            let announcementSubtype = null;
+            if (chipElements && chipElements.length > 0) {
+              typeAnnouncement = chipElements[0].textContent.trim();
+              if (chipElements.length > 1) {
+                announcementSubtype = chipElements[1].textContent.trim();
+              }
             }
-          }
-          
-          // Дополнительное поле: location (из aria-label элемента _location_1lwtt_52)
-          const locationEl = item.querySelector('p._location_1lwtt_52');
-          let locText = null;
-          if (locationEl) {
-            const ariaLabel = locationEl.getAttribute('aria-label');
-            locText = ariaLabel 
-              ? ariaLabel.replace("Sted for gjennomføring:", "").trim() 
-              : locationEl.textContent.trim();
-          }
-          
-          // Дополнительное поле: estValue (estimert verdi)
-          const estValue = item.querySelector('p._est_value_1lwtt_53')?.textContent.trim() || null;
-          
-          // Дополнительное поле: deadline (если оно присутствует)
-          const deadlineEl = item.querySelector('p[aria-label^="Frist"]');
-          const deadline = deadlineEl
-            ? (deadlineEl.textContent.trim().match(/\d{2}\.\d{2}\.\d{4}/) || [null])[0]
-            : null;
-          
-          // Дополнительное поле: eoes – извлекаем информацию из abbr с title, содержащим "Kunngjort i EØS"
-          const eoesEl = item.querySelector('abbr[title*="Kunngjort i EØS"]');
-          const eoes = eoesEl ? eoesEl.getAttribute('title') : null;
+            // Извлекаем локацию из элемента с классом _location_1lwtt_52 (попытка использовать aria-label)
+            const locationEl = item.querySelector('p._location_1lwtt_52');
+            let locText = null;
+            if (locationEl) {
+              const ariaLabel = locationEl.getAttribute('aria-label');
+              locText = ariaLabel ? ariaLabel.replace("Sted for gjennomføring:", "").trim() : locationEl.textContent.trim();
+            }
+            // Дополнительное поле: estValue (estimert verdi)
+            const estValue = item.querySelector('p._est_value_1lwtt_53')?.textContent.trim() || null;
+            // Дополнительное поле: deadline (если присутствует)
+            const deadlineEl = item.querySelector('p[aria-label^="Frist"]');
+            const deadline = deadlineEl
+              ? (deadlineEl.textContent.trim().match(/\d{2}\.\d{2}\.\d{4}/) || [null])[0]
+              : null;
+            // Дополнительное поле: eoes – извлекаем из abbr с атрибутом title, содержащим "Kunngjort i EØS"
+            const eoesEl = item.querySelector('abbr[title*="Kunngjort i EØS"]');
+            const eoes = eoesEl ? eoesEl.getAttribute('title') : null;
 
-          console.log("Найден тендер:", title, "Дата:", publicationDate);
-          return { 
-            title, 
-            description, 
-            link, 
-            publicationDate, 
-            buyer, 
-            typeAnnouncement, 
-            announcementSubtype,
-            location: locText, 
-            estValue,
-            deadline,
-            eoes
-          };
-        })
-      );
-    };
-
-    // Цикл для прохода по страницам, пока есть данные
-    while (true) {
-      const pageUrl = `${baseUrl}&page=${pageNumber}`;
-      console.log(`Загрузка страницы ${pageNumber}: ${pageUrl}`);
-      await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-      
-      if (pageNumber > 1 && !page.url().includes(`page=${pageNumber}`)) {
-        console.log(`Ожидаемая страница ${pageNumber} не открылась (текущий URL: ${page.url()}). Завершаем цикл.`);
-        break;
-      }
-      
-      try {
-        await page.waitForSelector('ul._result_list_dx2u4_58 > li', { timeout: 15000 });
-      } catch {
-        console.log(`На странице ${pageNumber} нужный селектор не найден. Данные, видимо, закончились.`);
-        break;
-      }
-      
-      await autoScroll(page);
-      const newTenders = await extractTenders();
-      console.log(`Найдено тендеров на странице ${pageNumber}: ${newTenders.length}`);
-
-      if (newTenders.length === 0) {
-        console.log("На текущей странице данных больше нет, завершаем цикл пагинации.");
-        break;
+            console.log("Найден тендер:", title, "Дата:", publicationDate);
+            return { 
+              title, 
+              description, 
+              link, 
+              publicationDate, 
+              buyer, 
+              typeAnnouncement, 
+              announcementSubtype,
+              location: locText, 
+              estValue,
+              deadline,
+              eoes
+            };
+          })
+        );
       }
 
-      tenders.push(...newTenders);
-      pageNumber++;
-    }
+      // Цикл пагинации для текущего CPV-кода
+      while (true) {
+        const pageUrl = `${baseUrl}&page=${pageNumber}`;
+        console.log(`Загрузка страницы ${pageNumber} для CPV ${cpvCode}: ${pageUrl}`);
+        await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+
+        if (pageNumber > 1 && !page.url().includes(`page=${pageNumber}`)) {
+          console.log(`Ожидаемая страница ${pageNumber} не открылась для CPV ${cpvCode} (текущий URL: ${page.url()}). Завершаем цикл.`);
+          break;
+        }
+
+        try {
+          await page.waitForSelector('ul._result_list_dx2u4_58 > li', { timeout: 15000 });
+        } catch {
+          console.log(`На странице ${pageNumber} для CPV ${cpvCode} нужный селектор не найден. Данные, видимо, закончились.`);
+          break;
+        }
+
+        await autoScroll(page);
+        const newTenders = await extractTenders();
+        console.log(`Найдено тендеров на странице ${pageNumber} для CPV ${cpvCode}: ${newTenders.length}`);
+
+        if (newTenders.length === 0) {
+          console.log("На текущей странице данных больше нет, завершаем цикл пагинации для CPV", cpvCode);
+          break;
+        }
+
+        tenders.push(...newTenders);
+        pageNumber++;
+      }
+
+      overallTenders.push(...tenders);
+      await page.close();
+    } // Конец перебора всех CPV-кодов
 
     await browser.close();
-    console.log("Все извлеченные тендеры ДО фильтрации:", tenders);
+    console.log("Все извлеченные тендеры ДО фильтрации:", overallTenders);
 
-    // Фильтрация по диапазону дат (на случай, если сайт возвращает записи за пределами нужного диапазона)
-    const filteredTenders = tenders.filter(tender => {
+    // Фильтрация тендеров по диапазону дат (в случае, если сайт возвращает записи вне указанного диапазона)
+    const filteredTenders = overallTenders.filter(tender => {
       if (!tender.publicationDate) return false;
       const parts = tender.publicationDate.split('.');
       if (parts.length !== 3) return false;
@@ -177,6 +182,372 @@ app.post('/api/notices/doffin-scrape', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Сервер запущен на http://localhost:${PORT}`);
 });
+
+
+
+
+//200% раб код// import puppeteer from 'puppeteer';
+// import express from 'express';
+// import cors from 'cors';
+
+// const app = express();
+// const PORT = 4003;
+
+// app.use(cors());
+// app.use(express.json());
+
+// app.post('/api/notices/doffin-scrape', async (req, res) => {
+//   const { from, to, location, cpv } = req.body;
+
+//   if (!from || !to) {
+//     return res.status(400).json({ error: 'Поля "from" и "to" обязательны для заполнения.' });
+//   }
+
+//   // Если регион не передан, используем стандартное значение
+//   const loc = location || 'NO020';
+//   // Используем переданный CPV-код или значение по умолчанию
+//   const cpvCode = cpv || '45000000';
+
+//   try {
+//     const browser = await puppeteer.launch({ headless: false });
+//     const page = await browser.newPage();
+
+//     // Формируем базовый URL с диапазоном дат, регионом и CPV-кодом
+//     const baseUrl = `https://www.doffin.no/search?searchString=${encodeURIComponent(cpvCode)}&fromDate=${from}&toDate=${to}&location=${loc}`;
+//     const tenders = [];
+//     let pageNumber = 1;
+
+//     // Функция автоскроллинга
+//     async function autoScroll(page) {
+//       await page.evaluate(async () => {
+//         await new Promise((resolve) => {
+//           let totalHeight = 0;
+//           const distance = 100;
+//           const timer = setInterval(() => {
+//             const scrollHeight = document.body.scrollHeight;
+//             window.scrollBy(0, distance);
+//             totalHeight += distance;
+//             if (totalHeight >= scrollHeight) {
+//               clearInterval(timer);
+//               resolve();
+//             }
+//           }, 200);
+//         });
+//       });
+//     }
+
+//     // Функция извлечения тендеров со страницы с дополнительными полями
+//     const extractTenders = async () => {
+//       return await page.$$eval('ul._result_list_dx2u4_58 > li', items =>
+//         items.map(item => {
+//           const title = item.querySelector('h2._title_1lwtt_26')?.textContent.trim();
+//           const description = item.querySelector('p._ingress_1lwtt_33')?.textContent.trim();
+
+//           // Извлекаем ссылку и преобразуем относительный URL в абсолютный, если необходимо
+//           const rawLink = item.querySelector('a')?.getAttribute('href');
+//           const link = rawLink && rawLink.startsWith('/') ? `https://www.doffin.no${rawLink}` : rawLink;
+
+//           const dateElement = item.querySelector('p._issue_date_1lwtt_54') || 
+//                               item.querySelector('p.альтернативный_класс');
+//           const publicationDate = dateElement
+//             ? (dateElement.textContent.trim().match(/\d{2}\.\d{2}\.\d{4}/) || [null])[0]
+//             : null;
+          
+//           // Объединяем все элементы с классом _buyer_1lwtt_16 для oppdragsgiver
+//           const buyerElements = item.querySelectorAll('p._buyer_1lwtt_16');
+//           const buyer = (buyerElements && buyerElements.length > 0)
+//             ? Array.from(buyerElements).map(el => el.textContent.trim()).join(" | ")
+//             : null;
+          
+//           // Дополнительные поля: тип объявления (первый чип) и подтип (второй чип, если есть)
+//           const chipElements = item.querySelectorAll('div._chipline_1gf9m_1 > p');
+//           let typeAnnouncement = null;
+//           let announcementSubtype = null;
+//           if (chipElements && chipElements.length > 0) {
+//             typeAnnouncement = chipElements[0].textContent.trim();
+//             if (chipElements.length > 1) {
+//               announcementSubtype = chipElements[1].textContent.trim();
+//             }
+//           }
+          
+//           // Извлечение локации (из aria-label элемента _location_1lwtt_52)
+//           const locationEl = item.querySelector('p._location_1lwtt_52');
+//           let locText = null;
+//           if (locationEl) {
+//             const ariaLabel = locationEl.getAttribute('aria-label');
+//             locText = ariaLabel 
+//               ? ariaLabel.replace("Sted for gjennomføring:", "").trim() 
+//               : locationEl.textContent.trim();
+//           }
+          
+//           // Дополнительное поле: estValue (estimert verdi)
+//           const estValue = item.querySelector('p._est_value_1lwtt_53')?.textContent.trim() || null;
+          
+//           // Дополнительное поле: deadline (если присутствует)
+//           const deadlineEl = item.querySelector('p[aria-label^="Frist"]');
+//           const deadline = deadlineEl
+//             ? (deadlineEl.textContent.trim().match(/\d{2}\.\d{2}\.\d{4}/) || [null])[0]
+//             : null;
+          
+//           // Дополнительное поле: eoes – извлекаем информацию из abbr с title, содержащим "Kunngjort i EØS"
+//           const eoesEl = item.querySelector('abbr[title*="Kunngjort i EØS"]');
+//           const eoes = eoesEl ? eoesEl.getAttribute('title') : null;
+
+//           console.log("Найден тендер:", title, "Дата:", publicationDate);
+//           return { 
+//             title, 
+//             description, 
+//             link, 
+//             publicationDate, 
+//             buyer, 
+//             typeAnnouncement, 
+//             announcementSubtype,
+//             location: locText, 
+//             estValue,
+//             deadline,
+//             eoes
+//           };
+//         })
+//       );
+//     };
+
+//     // Цикл пагинации для обхода страниц с данными
+//     while (true) {
+//       const pageUrl = `${baseUrl}&page=${pageNumber}`;
+//       console.log(`Загрузка страницы ${pageNumber}: ${pageUrl}`);
+//       await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+      
+//       if (pageNumber > 1 && !page.url().includes(`page=${pageNumber}`)) {
+//         console.log(`Ожидаемая страница ${pageNumber} не открылась (текущий URL: ${page.url()}). Завершаем цикл.`);
+//         break;
+//       }
+      
+//       try {
+//         await page.waitForSelector('ul._result_list_dx2u4_58 > li', { timeout: 15000 });
+//       } catch {
+//         console.log(`На странице ${pageNumber} нужный селектор не найден. Данные, видимо, закончились.`);
+//         break;
+//       }
+      
+//       await autoScroll(page);
+//       const newTenders = await extractTenders();
+//       console.log(`Найдено тендеров на странице ${pageNumber}: ${newTenders.length}`);
+
+//       if (newTenders.length === 0) {
+//         console.log("На текущей странице данных больше нет, завершаем цикл пагинации.");
+//         break;
+//       }
+
+//       tenders.push(...newTenders);
+//       pageNumber++;
+//     }
+
+//     await browser.close();
+//     console.log("Все извлеченные тендеры ДО фильтрации:", tenders);
+
+//     // Фильтрация по диапазону дат (если сайт возвращает данные вне указанного диапазона)
+//     const filteredTenders = tenders.filter(tender => {
+//       if (!tender.publicationDate) return false;
+//       const parts = tender.publicationDate.split('.');
+//       if (parts.length !== 3) return false;
+//       const formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+//       const tenderDate = new Date(formattedDate);
+//       return tenderDate >= new Date(from) && tenderDate <= new Date(to);
+//     });
+
+//     console.log("Все тендеры после фильтрации:", filteredTenders);
+//     res.setHeader('Cache-Control', 'no-store');
+//     res.status(200).json({ results: filteredTenders });
+//   } catch (error) {
+//     console.error('Ошибка при скрапинге данных:', error);
+//     res.status(500).json({ error: 'Ошибка при скрапинге данных.' });
+//   }
+// });
+
+// app.listen(PORT, () => {
+//   console.log(`Сервер запущен на http://localhost:${PORT}`);
+// });
+
+
+//100% раб код// import puppeteer from 'puppeteer';
+// import express from 'express';
+// import cors from 'cors';
+
+// const app = express();
+// const PORT = 4003;
+
+// app.use(cors());
+// app.use(express.json());
+
+// app.post('/api/notices/doffin-scrape', async (req, res) => {
+//   const { from, to, location } = req.body;
+
+//   if (!from || !to) {
+//     return res.status(400).json({ error: 'Поля "from" и "to" обязательны для заполнения.' });
+//   }
+
+//   // Если регион не передан, используем стандартное значение
+//   const loc = location || 'NO020';
+
+//   try {
+//     const browser = await puppeteer.launch({ headless: false });
+//     const page = await browser.newPage();
+
+//     // Формируем базовый URL с выбранным диапазоном дат и регионом
+//     const baseUrl = `https://www.doffin.no/search?searchString=45000000&fromDate=${from}&toDate=${to}&location=${loc}`;
+//     const tenders = [];
+//     let pageNumber = 1;
+
+//     // Функция автоскроллинга
+//     async function autoScroll(page) {
+//       await page.evaluate(async () => {
+//         await new Promise((resolve) => {
+//           let totalHeight = 0;
+//           const distance = 100;
+//           const timer = setInterval(() => {
+//             const scrollHeight = document.body.scrollHeight;
+//             window.scrollBy(0, distance);
+//             totalHeight += distance;
+//             if (totalHeight >= scrollHeight) {
+//               clearInterval(timer);
+//               resolve();
+//             }
+//           }, 200);
+//         });
+//       });
+//     }
+
+//     // Функция извлечения тендеров со страницы с дополнительными полями
+//     const extractTenders = async () => {
+//       return await page.$$eval('ul._result_list_dx2u4_58 > li', items =>
+//         items.map(item => {
+//           const title = item.querySelector('h2._title_1lwtt_26')?.textContent.trim();
+//           const description = item.querySelector('p._ingress_1lwtt_33')?.textContent.trim();
+
+//           // Извлечение ссылки и преобразование в абсолютный URL, если ссылка относительная
+//           const rawLink = item.querySelector('a')?.getAttribute('href');
+//           const link = rawLink && rawLink.startsWith('/') ? `https://www.doffin.no${rawLink}` : rawLink;
+
+//           const dateElement = item.querySelector('p._issue_date_1lwtt_54') || 
+//                               item.querySelector('p.альтернативный_класс');
+//           const publicationDate = dateElement
+//             ? (dateElement.textContent.trim().match(/\d{2}\.\d{2}\.\d{4}/) || [null])[0]
+//             : null;
+          
+//           // Обновлённое поле oppdragsgiver: объединяем все элементы с классом _buyer_1lwtt_16
+//           const buyerElements = item.querySelectorAll('p._buyer_1lwtt_16');
+//           const buyer = (buyerElements && buyerElements.length > 0)
+//             ? Array.from(buyerElements).map(el => el.textContent.trim()).join(" | ")
+//             : null;
+          
+//           // Дополнительные поля: тип объявления (первый чип) и подтип (второй чип, если есть)
+//           const chipElements = item.querySelectorAll('div._chipline_1gf9m_1 > p');
+//           let typeAnnouncement = null;
+//           let announcementSubtype = null;
+//           if (chipElements && chipElements.length > 0) {
+//             typeAnnouncement = chipElements[0].textContent.trim();
+//             if (chipElements.length > 1) {
+//               announcementSubtype = chipElements[1].textContent.trim();
+//             }
+//           }
+          
+//           // Дополнительное поле: location (из aria-label элемента _location_1lwtt_52)
+//           const locationEl = item.querySelector('p._location_1lwtt_52');
+//           let locText = null;
+//           if (locationEl) {
+//             const ariaLabel = locationEl.getAttribute('aria-label');
+//             locText = ariaLabel 
+//               ? ariaLabel.replace("Sted for gjennomføring:", "").trim() 
+//               : locationEl.textContent.trim();
+//           }
+          
+//           // Дополнительное поле: estValue (estimert verdi)
+//           const estValue = item.querySelector('p._est_value_1lwtt_53')?.textContent.trim() || null;
+          
+//           // Дополнительное поле: deadline (если оно присутствует)
+//           const deadlineEl = item.querySelector('p[aria-label^="Frist"]');
+//           const deadline = deadlineEl
+//             ? (deadlineEl.textContent.trim().match(/\d{2}\.\d{2}\.\d{4}/) || [null])[0]
+//             : null;
+          
+//           // Дополнительное поле: eoes – извлекаем информацию из abbr с title, содержащим "Kunngjort i EØS"
+//           const eoesEl = item.querySelector('abbr[title*="Kunngjort i EØS"]');
+//           const eoes = eoesEl ? eoesEl.getAttribute('title') : null;
+
+//           console.log("Найден тендер:", title, "Дата:", publicationDate);
+//           return { 
+//             title, 
+//             description, 
+//             link, 
+//             publicationDate, 
+//             buyer, 
+//             typeAnnouncement, 
+//             announcementSubtype,
+//             location: locText, 
+//             estValue,
+//             deadline,
+//             eoes
+//           };
+//         })
+//       );
+//     };
+
+//     // Цикл для прохода по страницам, пока есть данные
+//     while (true) {
+//       const pageUrl = `${baseUrl}&page=${pageNumber}`;
+//       console.log(`Загрузка страницы ${pageNumber}: ${pageUrl}`);
+//       await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+      
+//       if (pageNumber > 1 && !page.url().includes(`page=${pageNumber}`)) {
+//         console.log(`Ожидаемая страница ${pageNumber} не открылась (текущий URL: ${page.url()}). Завершаем цикл.`);
+//         break;
+//       }
+      
+//       try {
+//         await page.waitForSelector('ul._result_list_dx2u4_58 > li', { timeout: 15000 });
+//       } catch {
+//         console.log(`На странице ${pageNumber} нужный селектор не найден. Данные, видимо, закончились.`);
+//         break;
+//       }
+      
+//       await autoScroll(page);
+//       const newTenders = await extractTenders();
+//       console.log(`Найдено тендеров на странице ${pageNumber}: ${newTenders.length}`);
+
+//       if (newTenders.length === 0) {
+//         console.log("На текущей странице данных больше нет, завершаем цикл пагинации.");
+//         break;
+//       }
+
+//       tenders.push(...newTenders);
+//       pageNumber++;
+//     }
+
+//     await browser.close();
+//     console.log("Все извлеченные тендеры ДО фильтрации:", tenders);
+
+//     // Фильтрация по диапазону дат (на случай, если сайт возвращает записи за пределами нужного диапазона)
+//     const filteredTenders = tenders.filter(tender => {
+//       if (!tender.publicationDate) return false;
+//       const parts = tender.publicationDate.split('.');
+//       if (parts.length !== 3) return false;
+//       const formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+//       const tenderDate = new Date(formattedDate);
+//       return tenderDate >= new Date(from) && tenderDate <= new Date(to);
+//     });
+
+//     console.log("Все тендеры после фильтрации:", filteredTenders);
+//     res.setHeader('Cache-Control', 'no-store');
+//     res.status(200).json({ results: filteredTenders });
+//   } catch (error) {
+//     console.error('Ошибка при скрапинге данных:', error);
+//     res.status(500).json({ error: 'Ошибка при скрапинге данных.' });
+//   }
+// });
+
+// app.listen(PORT, () => {
+//   console.log(`Сервер запущен на http://localhost:${PORT}`);
+// });
 
 
 // import puppeteer from 'puppeteer';
