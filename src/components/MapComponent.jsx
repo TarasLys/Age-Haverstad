@@ -4,6 +4,9 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 const municipalityMapping = {
+  "modum": [59.95750, 9.98278],
+  "ringerike": [60.20528, 10.15250],
+  "oslo": [59.9127300, 10.7460900],
   "åmot": [61.267, 11.683],
   "åsnes": [60.6139, 12.0139],
   "alvdal": [61.900, 10.783],

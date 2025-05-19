@@ -1,3 +1,5 @@
+
+//рабочий перед finndoff
 import React, { useState, useRef, useImperativeHandle, forwardRef, useEffect } from "react";
 
 function extractText(val) {

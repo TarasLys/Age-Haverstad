@@ -1,6 +1,201 @@
+// import puppeteer from 'puppeteer';
+// import express from 'express';
+// import cors from 'cors';
+
+// const app = express();
+// const PORT = 4003;
+
+// app.use(cors());
+// app.use(express.json());
+
+// // Определяем сопоставление названий регионов с кодами, которые принимает API
+// const regionMapping = {
+//   'innlandet': 'NO020',
+//   'oslo og viken': 'NO080',
+//   'bergen': 'NO030'
+// };
+
+// app.post('/api/notices/doffin-scrape', async (req, res) => {
+//   const { from, to, location, cpv } = req.body;
+  
+//   if (!from || !to) {
+//     return res.status(400).json({ error: 'Поля "from" и "to" обязательны для заполнения.' });
+//   }
+  
+//   // Если параметр location передан, разбиваем его по запятым, приводим к нижнему регистру и преобразуем через regionMapping.
+//   // Если не передан — используем регионы по умолчанию.
+//   const locs = location
+//     ? location
+//         .split(',')
+//         .map(l => l.trim().toLowerCase())
+//         .map(region => regionMapping[region] || region)
+//         .filter(Boolean)
+//     : ['NO020', 'NO080', 'NO030'];
+  
+//   // Парсинг CPV-кодов
+//   const cpvInput = cpv || '45000000';
+//   const cpvCodes = cpvInput.split(',').map(code => code.trim()).filter(Boolean);
+  
+//   try {
+//     const browser = await puppeteer.launch({ headless: false });
+//     let overallTenders = [];
+  
+//     for (const cpvCode of cpvCodes) {
+//       for (const currentLoc of locs) {
+//         // Создаём инкогнито-контекст для независимости сессии
+//         const context = await browser.createIncognitoBrowserContext();
+//         const page = await context.newPage();
+  
+//         // Устанавливаем User-Agent
+//         await page.setUserAgent(
+//           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+//         );
+  
+//         const baseUrl = `https://www.doffin.no/search?searchString=${encodeURIComponent(cpvCode)}&fromDate=${from}&toDate=${to}&location=${encodeURIComponent(currentLoc)}`;
+//         let tenders = [];
+//         let pageNumber = 1;
+  
+//         async function autoScroll(page) {
+//           await page.evaluate(async () => {
+//             await new Promise((resolve) => {
+//               let totalHeight = 0;
+//               const distance = 100;
+//               const timer = setInterval(() => {
+//                 const scrollHeight = document.body.scrollHeight;
+//                 window.scrollBy(0, distance);
+//                 totalHeight += distance;
+//                 if (totalHeight >= scrollHeight) {
+//                   clearInterval(timer);
+//                   resolve();
+//                 }
+//               }, 200);
+//             });
+//           });
+//         }
+  
+//         async function extractTenders() {
+//           try {
+//             return await page.$$eval('ul._result_list_dx2u4_58 > li', items =>
+//               items.map(item => {
+//                 const title = item.querySelector('h2._title_1lwtt_26')?.textContent.trim();
+//                 const description = item.querySelector('p._ingress_1lwtt_33')?.textContent.trim();
+//                 const rawLink = item.querySelector('a')?.getAttribute('href');
+//                 const link = rawLink && rawLink.startsWith('/') ? `https://www.doffin.no${rawLink}` : rawLink;
+//                 const dateElement = item.querySelector('p._issue_date_1lwtt_54') || item.querySelector('p.альтернативный_класс');
+//                 const publicationDate = dateElement
+//                   ? (dateElement.textContent.trim().match(/\d{2}\.\d{2}\.\d{4}/) || [null])[0]
+//                   : null;
+//                 const buyerElements = item.querySelectorAll('p._buyer_1lwtt_16');
+//                 const buyer = buyerElements && buyerElements.length > 0
+//                   ? Array.from(buyerElements).map(el => el.textContent.trim()).join(' | ')
+//                   : null;
+//                 const chipElements = item.querySelectorAll('div._chipline_1gf9m_1 > p');
+//                 let typeAnnouncement = null;
+//                 let announcementSubtype = null;
+//                 if (chipElements && chipElements.length > 0) {
+//                   typeAnnouncement = chipElements[0].textContent.trim();
+//                   if (chipElements.length > 1) {
+//                     announcementSubtype = chipElements[1].textContent.trim();
+//                   }
+//                 }
+//                 const locationEl = item.querySelector('p._location_1lwtt_52');
+//                 let locText = null;
+//                 if (locationEl) {
+//                   const ariaLabel = locationEl.getAttribute('aria-label');
+//                   locText = ariaLabel
+//                     ? ariaLabel.replace('Sted for gjennomføring:', '').trim()
+//                     : locationEl.textContent.trim();
+//                 }
+//                 const estValue = item.querySelector('p._est_value_1lwtt_53')?.textContent.trim() || null;
+//                 const deadlineEl = item.querySelector('p[aria-label^="Frist"]');
+//                 const deadline = deadlineEl
+//                   ? (deadlineEl.textContent.trim().match(/\d{2}\.\d{2}\.\d{4}/) || [null])[0]
+//                   : null;
+//                 const eoesEl = item.querySelector('abbr[title*="Kunngjort i EØS"]');
+//                 const eoes = eoesEl ? eoesEl.getAttribute('title') : null;
+  
+//                 return { title, description, link, publicationDate, buyer, typeAnnouncement, announcementSubtype, location: locText, estValue, deadline, eoes };
+//               })
+//             );
+//           } catch (err) {
+//             console.error("Ошибка в extractTenders:", err);
+//             return [];
+//           }
+//         }
+  
+//         while (true) {
+//           const pageUrl = `${baseUrl}&page=${pageNumber}`;
+//           console.log(`Загрузка страницы ${pageNumber} для CPV ${cpvCode} и региона ${currentLoc}: ${pageUrl}`);
+  
+//           await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+  
+//           // Небольшая задержка для полной загрузки страницы
+//           await page.waitForTimeout(5000);
+  
+//           try {
+//             await page.waitForSelector('ul._result_list_dx2u4_58 > li', { timeout: 30000 });
+//           } catch (err) {
+//             console.log(`Селектор не найден на странице ${pageNumber} для CPV ${cpvCode} и региона ${currentLoc}. Возможно, данные закончились.`);
+//             // Выводим часть контента для отладки
+//             const content = await page.content();
+//             console.log("Отладка - начало содержимого страницы:", content.substring(0, 500));
+//             break;
+//           }
+  
+//           await autoScroll(page);
+//           const newTenders = await extractTenders();
+//           console.log(`Найдено тендеров на странице ${pageNumber} для CPV ${cpvCode} и региона ${currentLoc}: ${newTenders.length}`);
+  
+//           if (newTenders.length === 0) {
+//             console.log(`Нет новых тендеров на странице ${pageNumber} для CPV ${cpvCode} и региона ${currentLoc}. Прерываем пагинацию.`);
+//             break;
+//           }
+  
+//           tenders.push(...newTenders);
+//           pageNumber++;
+//         }
+  
+//         overallTenders.push(...tenders);
+//         await page.close();
+//         await context.close();
+//       }
+//     }
+  
+//     await browser.close();
+//     console.log("Все извлеченные тендеры ДО фильтрации:", overallTenders);
+  
+//     const filteredTenders = overallTenders.filter(tender => {
+//       if (!tender.publicationDate) return false;
+//       const parts = tender.publicationDate.split('.');
+//       if (parts.length !== 3) return false;
+//       const formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+//       const tenderDate = new Date(formattedDate);
+//       return tenderDate >= new Date(from) && tenderDate <= new Date(to);
+//     });
+  
+//     console.log("Все тендеры после фильтрации:", filteredTenders);
+//     res.setHeader('Cache-Control', 'no-store');
+//     res.status(200).json({ results: filteredTenders });
+//   } catch (error) {
+//     console.error('Ошибка при скрапинге данных:', error);
+//     res.status(500).json({ error: 'Ошибка при скрапинге данных.' });
+//   }
+// });
+  
+// app.listen(PORT, () => {
+//   console.log(`Сервер запущен на http://localhost:${PORT}`);
+// });
 
 
 
+
+
+
+
+
+
+
+// раб код перед изменением и добавлением регионов
 import puppeteer from 'puppeteer';
 import express from 'express';
 import cors from 'cors';
@@ -19,7 +214,8 @@ app.post('/api/notices/doffin-scrape', async (req, res) => {
   }
 
   // Если регион не передан, используем стандартное значение
-  const loc = location || 'NO020';
+  //const loc = location || 'NO020';
+  const loc = location || 'NO020%2CNO081';
 
   // Получаем CPV-коды из поля (например, "45000000,48000000")
   const cpvInput = cpv || '45000000';
