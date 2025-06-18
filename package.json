@@ -10,12 +10,18 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@emailjs/nodejs": "^5.0.2",
     "axios": "^1.9.0",
     "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "emailjs-com": "^3.2.0",
     "express": "^5.1.0",
     "fast-xml-parser": "^5.2.1",
+    "html2canvas": "^1.4.1",
     "leaflet": "^1.9.4",
     "leaflet-defaulticon-compatibility": "^0.1.2",
+    "node-cron": "^4.0.5",
+    "node-fetch": "^3.3.2",
     "puppeteer": "^24.7.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

@@ -1,3 +1,5 @@
+
+
 import React from "react";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import L from "leaflet";
@@ -165,6 +167,9 @@ function getMunicipality(location) {
 }
 
 const MapComponent = ({ locations, onMarkerDoubleClick, onLegendItemClick }) => {
+  // ЛОГ ДЛЯ ОТЛАДКИ
+  console.log("MapComponent locations", locations);
+
   const duplicateCoords = {};
 
   // Формирование списка для легенды.
@@ -216,20 +221,20 @@ const MapComponent = ({ locations, onMarkerDoubleClick, onLegendItemClick }) => 
           if (!tokens.includes("kommune")) {
             return null;
           }
-          
+
           const originalCoords = (() => {
             const municipality = getMunicipality(location);
-            
+
             if (!municipality || !municipalityMapping[municipality]) {
               return null;
             }
             return municipalityMapping[municipality];
           })();
-          
+
           if (!originalCoords) {
             return null;
           }
-          
+
           const key = originalCoords.join(",");
           if (duplicateCoords[key] === undefined) {
             duplicateCoords[key] = 0;
@@ -280,6 +285,7 @@ const MapComponent = ({ locations, onMarkerDoubleClick, onLegendItemClick }) => 
         <div
           style={{
             position: "absolute",
+            top: "10px",
             bottom: "10px",
             left: "10px",
             zIndex: 1000,
@@ -288,7 +294,9 @@ const MapComponent = ({ locations, onMarkerDoubleClick, onLegendItemClick }) => 
             gap: "8px",
             backgroundColor: "rgba(255,255,255,0.85)",
             padding: "8px",
-            borderRadius: "8px"
+            borderRadius: "8px",
+            height: "calc(100% - 20px)",
+            overflowY: "auto"
           }}
         >
           {sortedLegendItems.map((item) => {
@@ -318,6 +326,330 @@ const MapComponent = ({ locations, onMarkerDoubleClick, onLegendItemClick }) => 
   );
 };
 export default MapComponent;
+
+
+
+
+// import React from "react";
+// import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+// import L from "leaflet";
+// import "leaflet/dist/leaflet.css";
+
+// const municipalityMapping = {
+//   "modum": [59.95750, 9.98278],
+//   "ringerike": [60.20528, 10.15250],
+//   "oslo": [59.9127300, 10.7460900],
+//   "åmot": [61.267, 11.683],
+//   "åsnes": [60.6139, 12.0139],
+//   "alvdal": [61.900, 10.783],
+//   "dovre": [61.9856, 9.2494],
+//   "eidskog": [60.950, 11.450],
+//   "elverum": [60.8819, 11.5623],
+//   "engerdal": [61.570, 11.980],
+//   "etnedal": [61.350, 9.250],
+//   "folldal": [61.270, 9.420],
+//   "gausdal": [61.020, 9.970],
+//   "gjøvik": [60.803, 10.693],
+//   "gran": [60.3928, 10.5600],
+//   "grue": [61.100, 12.000],
+//   "hamar": [60.800, 11.080],
+//   "kongsvinger": [60.150, 11.990],
+//   "lesja": [62.100, 8.800],
+//   "lillehammer": [61.117, 10.467],
+//   "lom": [61.687, 9.041],
+//   "løten": [60.980, 11.600],
+//   "nord-aurdal": [61.034, 9.474],
+//   "nord-fron": [61.595, 9.751],
+//   "nord-odal": [60.4422, 11.5681],
+//   "nordre land": [60.762, 10.026],
+//   "os": [61.050, 8.870],
+//   "østre toten": [60.864, 10.215],
+//   "øyer": [61.2650, 10.4128],
+//   "øystre slidre": [61.000, 8.740],
+//   "rendalen": [61.600, 10.400],
+//   "ringebu": [61.52965, 10.13889],
+//   "ringsaker": [60.8858, 10.9394],
+//   "sel": [61.81694, 9.57333],
+//   "skjåk": [61.8753, 8.3702],
+//   "søndre land": [60.913, 10.220],
+//   "sør-aurdal": [60.990, 9.300],
+//   "sør-fron": [61.082, 9.860],
+//   "sør-odal": [60.2542, 11.4750],
+//   "stange": [60.712, 11.070],
+//   "stor-elvdal": [61.430, 10.850],
+//   "tolga": [61.710, 10.380],
+//   "trysil": [61.233, 12.117],
+//   "tynset": [63.300, 10.800],
+//   "vågå": [61.8757, 9.0957],
+//   "våler": [60.940, 11.350],
+//   "vang": [61.070, 9.133],
+//   "vestre slidre": [61.070, 8.670],
+//   "vestre toten": [60.880, 10.680]
+// };
+
+// const fallbackCoords = [61.5, 10.6667];
+// const coloredIcons = [
+//   new L.Icon({
+//     iconUrl:
+//       "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png",
+//     shadowUrl:
+//       "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
+//     iconSize: [25, 41],
+//     iconAnchor: [12, 41],
+//     popupAnchor: [1, -34],
+//     shadowSize: [41, 41]
+//   }),
+//   new L.Icon({
+//     iconUrl:
+//       "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png",
+//     shadowUrl:
+//       "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
+//     iconSize: [25, 41],
+//     iconAnchor: [12, 41],
+//     popupAnchor: [1, -34],
+//     shadowSize: [41, 41]
+//   }),
+//   new L.Icon({
+//     iconUrl:
+//       "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png",
+//     shadowUrl:
+//       "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
+//     iconSize: [25, 41],
+//     iconAnchor: [12, 41],
+//     popupAnchor: [1, -34],
+//     shadowSize: [41, 41]
+//   }),
+//   new L.Icon({
+//     iconUrl:
+//       "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-orange.png",
+//     shadowUrl:
+//       "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
+//     iconSize: [25, 41],
+//     iconAnchor: [12, 41],
+//     popupAnchor: [1, -34],
+//     shadowSize: [41, 41]
+//   }),
+//   new L.Icon({
+//     iconUrl:
+//       "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-yellow.png",
+//     shadowUrl:
+//       "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
+//     iconSize: [25, 41],
+//     iconAnchor: [12, 41],
+//     popupAnchor: [1, -34],
+//     shadowSize: [41, 41]
+//   }),
+//   new L.Icon({
+//     iconUrl:
+//       "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-violet.png",
+//     shadowUrl:
+//       "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
+//     iconSize: [25, 41],
+//     iconAnchor: [12, 41],
+//     popupAnchor: [1, -34],
+//     shadowSize: [41, 41]
+//   }),
+//   new L.Icon({
+//     iconUrl:
+//       "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-grey.png",
+//     shadowUrl:
+//       "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
+//     iconSize: [25, 41],
+//     iconAnchor: [12, 41],
+//     popupAnchor: [1, -34],
+//     shadowSize: [41, 41]
+//   })
+// ];
+// const nonKommuneColors = [
+//   "#FF5733",
+//   "#33FF57",
+//   "#3357FF",
+//   "#FF33A8",
+//   "#FFD433",
+//   "#33FFF3",
+//   "#A833FF"
+// ];
+// function getTruncatedName(location) {
+//   const buyer = location.buyer || location.Oppdragsgiver;
+//   if (buyer) {
+//     const cleanText = buyer.replace(/[-–—]/g, " ");
+//     const words = cleanText.trim().split(/\s+/);
+//     return words.slice(0, 2).join(" ");
+//   }
+//   return "unknown";
+// }
+// function getMunicipality(location) {
+//   const buyer = location.buyer || location.Oppdragsgiver;
+//   if (buyer) {
+//     const lower = buyer.toLowerCase().trim();
+//     const kommuneIndex = lower.indexOf(" kommune");
+//     if (kommuneIndex !== -1) {
+//       return lower.substring(0, kommuneIndex).trim();
+//     }
+//     const fylkeskommuneIndex = lower.indexOf(" fylkeskommune");
+//     if (fylkeskommuneIndex !== -1) {
+//       return lower.substring(0, fylkeskommuneIndex).trim();
+//     }
+//     const tokens = lower.split(/[\s,.-]+/);
+//     return tokens[0].trim();
+//   }
+//   return null;
+// }
+
+// const MapComponent = ({ locations, onMarkerDoubleClick, onLegendItemClick }) => {
+//   const duplicateCoords = {};
+
+//   // Формирование списка для легенды.
+//   const legendItems = locations
+//     .map((loc, idx) => ({ location: loc, index: idx }))
+//     .filter((item) => {
+//       const text = (item.location.buyer || item.location.Oppdragsgiver || "").toLowerCase();
+//       if (!text.includes("kommune")) {
+//         return true;
+//       }
+//       const municipality = getMunicipality(item.location);
+//       return !(municipality && municipalityMapping[municipality]);
+//     });
+//   const sortedLegendItems = legendItems.sort((a, b) => {
+//     const ta = getTruncatedName(a.location);
+//     const tb = getTruncatedName(b.location);
+//     return ta.localeCompare(tb);
+//   });
+//   const legendItemStyle = {
+//     display: "flex",
+//     flexDirection: "row",
+//     alignItems: "center",
+//     gap: "6px",
+//     fontSize: "14px",
+//     cursor: "pointer"
+//   };
+//   const legendBoxStyle = { width: "24px", height: "24px", borderRadius: "50%" };
+//   const colorMap = {};
+//   let colorIndex = 0;
+
+//   return (
+//     <div style={{ width: "100%", height: "100%", position: "relative" }}>
+//       {/* Отключаем зум по dblclick, чтобы событие достигало нашего обработчика */}
+//       <MapContainer
+//         center={fallbackCoords}
+//         zoom={6}
+//         doubleClickZoom={false}
+//         style={{ width: "100%", height: "100%" }}
+//       >
+//         <TileLayer
+//           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+//           attribution="&copy; OpenStreetMap contributors"
+//         />
+//         {locations.map((location, index) => {
+//           const tokens = (location.buyer || location.Oppdragsgiver || "")
+//             .toLowerCase()
+//             .split(/\s+/)
+//             .map(token => token.replace(/[,.-]/g, ""));
+//           if (!tokens.includes("kommune")) {
+//             return null;
+//           }
+          
+//           const originalCoords = (() => {
+//             const municipality = getMunicipality(location);
+            
+//             if (!municipality || !municipalityMapping[municipality]) {
+//               return null;
+//             }
+//             return municipalityMapping[municipality];
+//           })();
+          
+//           if (!originalCoords) {
+//             return null;
+//           }
+          
+//           const key = originalCoords.join(",");
+//           if (duplicateCoords[key] === undefined) {
+//             duplicateCoords[key] = 0;
+//           } else {
+//             duplicateCoords[key]++;
+//           }
+//           const count = duplicateCoords[key];
+//           const offsetDelta = 0.05;
+//           const offsetCoords =
+//             count > 0
+//               ? [originalCoords[0] + offsetDelta * count, originalCoords[1] - offsetDelta * count]
+//               : originalCoords;
+//           const markerIcon = coloredIcons[count % coloredIcons.length];
+
+//           return (
+//             <Marker
+//               key={index}
+//               position={offsetCoords}
+//               icon={markerIcon}
+//               eventHandlers={{
+//                 dblclick: () => {
+//                   console.log("Marker dblclick, indeks:", index);
+//                   if (onMarkerDoubleClick) {
+//                     onMarkerDoubleClick(index);
+//                   }
+//                 }
+//               }}
+//             >
+//               <Popup>
+//                 <div>
+//                   <strong>{location.name}</strong>
+//                   <br />
+//                   <strong>Oppdragsgiver:</strong> {location.buyer || "Ikke spesifisert"}
+//                   <br />
+//                   <strong>Kommune:</strong>{" "}
+//                   {(() => {
+//                     const m = getMunicipality(location);
+//                     return m ? `${m} kommune` : "Ukjent";
+//                   })()}
+//                 </div>
+//               </Popup>
+//             </Marker>
+//           );
+//         })}
+//       </MapContainer>
+//       {/* Legende */}
+//       {sortedLegendItems.length > 0 && (
+//         <div
+//           style={{
+//             position: "absolute",
+//             bottom: "10px",
+//             left: "10px",
+//             zIndex: 1000,
+//             display: "flex",
+//             flexDirection: "column",
+//             gap: "8px",
+//             backgroundColor: "rgba(255,255,255,0.85)",
+//             padding: "8px",
+//             borderRadius: "8px"
+//           }}
+//         >
+//           {sortedLegendItems.map((item) => {
+//             const tName = getTruncatedName(item.location);
+//             if (!(tName in colorMap)) {
+//               colorMap[tName] = nonKommuneColors[colorIndex % nonKommuneColors.length];
+//               colorIndex++;
+//             }
+//             return (
+//               <div
+//                 key={item.index}
+//                 style={legendItemStyle}
+//                 onClick={() => {
+//                   if (onLegendItemClick) {
+//                     onLegendItemClick(item.index);
+//                   }
+//                 }}
+//               >
+//                 <div style={{ ...legendBoxStyle, backgroundColor: colorMap[tName] }}></div>
+//                 <div>{tName}</div>
+//               </div>
+//             );
+//           })}
+//         </div>
+//       )}
+//     </div>
+//   );
+// };
+// export default MapComponent;
 
 
 
