@@ -1,15 +1,38 @@
-require('dotenv').config(); // Загружаем переменные из .env
+// Explicitly load .env from the project root
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
-const { app, BrowserWindow, shell } = require('electron');
+// Log loaded environment variables for debugging
+console.log('SMTP_HOST:', process.env.SMTP_HOST);
+console.log('SMTP_USER:', process.env.SMTP_USER);
+console.log('SMTP_PASS:', process.env.SMTP_PASS ? '***' : undefined);
+console.log('VITE_TO_EMAIL:', process.env.VITE_TO_EMAIL);
+
+const { app, BrowserWindow, shell, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
 
-// Проверяем, что переменные окружения подгружаются (Mailgun)
-console.log("MAILGUN_API_KEY:", process.env.MAILGUN_API_KEY);
-console.log("MAILGUN_DOMAIN:", process.env.MAILGUN_DOMAIN);
-console.log("IMGUR_CLIENT_ID:", process.env.IMGUR_CLIENT_ID);
+// --- Nodemailer integration ---
+const emailService = require('./server/nodemailerEmailService.cjs');
+
+// IPC handler for sending email via Nodemailer (with extended logging)
+ipcMain.handle('sendTendersWithMap', async (event, mailOptions) => {
+  // Если поле to не передано — подставляем из .env
+  if (!mailOptions.to) {
+    mailOptions.to = process.env.VITE_TO_EMAIL;
+  }
+  console.log('IPC call sendTendersWithMap with params:', mailOptions);
+  console.log('mailOptions перед отправкой:', JSON.stringify(mailOptions, null, 2));
+  try {
+    const info = await emailService.sendMail(mailOptions);
+    console.log('Email sent result:', info);
+    return { success: true, messageId: info.messageId };
+  } catch (err) {
+    console.error('Email send error:', err);
+    return { success: false, error: err.message || err.toString() };
+  }
+});
 
 const isDev = process.env.NODE_ENV !== 'production';
 
@@ -23,8 +46,9 @@ function createWindow() {
     width: 1200,
     height: 800,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false, // SECURITY!
+      contextIsolation: true, // SECURITY!
+      preload: path.join(__dirname, 'preload.js'),
       webSecurity: false,
       allowRunningInsecureContent: true,
       experimentalFeatures: true
@@ -43,6 +67,7 @@ function createWindow() {
     }
   });
 
+  // Handle external links securely
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http://') || url.startsWith('https://')) {
       if (!url.includes('localhost') && !url.includes('127.0.0.1')) {
@@ -54,8 +79,13 @@ function createWindow() {
   });
 
   mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
-    const parsedUrl = new URL(navigationUrl);
-    if (parsedUrl.origin !== 'http://localhost:8888') {
+    try {
+      const parsedUrl = new URL(navigationUrl);
+      if (parsedUrl.origin !== 'http://localhost:8888') {
+        event.preventDefault();
+        shell.openExternal(navigationUrl);
+      }
+    } catch (e) {
       event.preventDefault();
       shell.openExternal(navigationUrl);
     }
@@ -74,15 +104,27 @@ function createWindow() {
 
 function killAllProcesses() {
   if (netlifyProcess) {
-    netlifyProcess.kill();
+    try {
+      netlifyProcess.kill();
+    } catch (e) {
+      console.warn('Failed to kill netlifyProcess:', e.message);
+    }
     netlifyProcess = null;
   }
   if (scraperProcess) {
-    scraperProcess.kill();
+    try {
+      scraperProcess.kill();
+    } catch (e) {
+      console.warn('Failed to kill scraperProcess:', e.message);
+    }
     scraperProcess = null;
   }
   if (staticServer) {
-    staticServer.close();
+    try {
+      staticServer.close();
+    } catch (e) {
+      console.warn('Failed to close staticServer:', e.message);
+    }
     staticServer = null;
   }
 }
@@ -93,6 +135,8 @@ function checkServerReady(port, maxAttempts = 30) {
     const checkServer = () => {
       attempts++;
       const req = http.get(`http://localhost:${port}`, (res) => {
+        // Server is up!
+        res.destroy();
         console.log(`Server is ready on port ${port}`);
         resolve(true);
       });
@@ -122,7 +166,7 @@ async function startBackendServices() {
   const serverPort = 8888;
 
   if (isDev) {
-    // В режиме разработки запускаем netlify dev
+    // In development, run netlify dev
     console.log('Starting Netlify dev server...');
     netlifyProcess = spawn('npx', ['netlify', 'dev'], {
       cwd: process.cwd(),
@@ -139,7 +183,7 @@ async function startBackendServices() {
       console.error('Netlify process error:', error);
     });
   } else {
-    // В продакшене запускаем статический сервер
+    // In production, run static server
     console.log('Starting static server...');
     try {
       const createStaticServer = require('./server/staticServer.cjs');
@@ -150,7 +194,7 @@ async function startBackendServices() {
     }
   }
 
-  // Ждем готовности сервера
+  // Wait for server to be ready
   try {
     await checkServerReady(serverPort);
     console.log('Web server is ready!');
@@ -159,9 +203,8 @@ async function startBackendServices() {
     throw error;
   }
 
-  // Запускаем scraper после того как веб-сервер готов
+  // Start scraper after web server is ready
   console.log('Starting scraper...');
-  // Всегда используем относительный путь от __dirname
   const scraperPath = path.join(__dirname, 'server', 'doffinScraper.js');
   if (!fs.existsSync(scraperPath)) {
     console.error(`Scraper file not found: ${scraperPath}`);
@@ -179,6 +222,7 @@ async function startBackendServices() {
   });
 }
 
+// Main app lifecycle
 app.whenReady().then(async () => {
   try {
     console.log('Starting backend services...');
@@ -208,6 +252,7 @@ app.on('before-quit', () => {
   killAllProcesses();
 });
 
+// Handle termination signals for graceful shutdown
 process.on('SIGINT', () => {
   killAllProcesses();
   process.exit();
@@ -218,6 +263,7 @@ process.on('SIGTERM', () => {
   process.exit();
 });
 
+// Extra security: handle navigation and new-window events globally
 app.on('web-contents-created', (event, contents) => {
   contents.on('new-window', (event, navigationUrl) => {
     event.preventDefault();
@@ -225,13 +271,254 @@ app.on('web-contents-created', (event, contents) => {
   });
 
   contents.on('will-navigate', (event, navigationUrl) => {
-    const parsedUrl = new URL(navigationUrl);
-    if (parsedUrl.origin !== 'http://localhost:8888') {
+    try {
+      const parsedUrl = new URL(navigationUrl);
+      if (parsedUrl.origin !== 'http://localhost:8888') {
+        event.preventDefault();
+        shell.openExternal(navigationUrl);
+      }
+    } catch (e) {
       event.preventDefault();
       shell.openExternal(navigationUrl);
     }
   });
 });
+
+
+//работает с Resend// require('dotenv').config(); // Загружаем переменные из .env
+
+// const { app, BrowserWindow, shell } = require('electron');
+// const { spawn } = require('child_process');
+// const path = require('path');
+// const http = require('http');
+// const fs = require('fs');
+
+// // Проверяем, что переменные окружения подгружаются (Mailgun)
+// console.log("MAILGUN_API_KEY:", process.env.MAILGUN_API_KEY);
+// console.log("MAILGUN_DOMAIN:", process.env.MAILGUN_DOMAIN);
+// console.log("IMGUR_CLIENT_ID:", process.env.IMGUR_CLIENT_ID);
+
+// const isDev = process.env.NODE_ENV !== 'production';
+
+// let mainWindow;
+// let netlifyProcess;
+// let scraperProcess;
+// let staticServer;
+
+// function createWindow() {
+//   mainWindow = new BrowserWindow({
+//     width: 1200,
+//     height: 800,
+//     webPreferences: {
+//       nodeIntegration: true,
+//       contextIsolation: false,
+//       webSecurity: false,
+//       allowRunningInsecureContent: true,
+//       experimentalFeatures: true
+//     },
+//     icon: path.join(__dirname, 'assets/icon.png'),
+//     show: false
+//   });
+
+//   const startUrl = 'http://localhost:8888';
+//   mainWindow.loadURL(startUrl);
+
+//   mainWindow.once('ready-to-show', () => {
+//     mainWindow.show();
+//     if (isDev) {
+//       mainWindow.webContents.openDevTools();
+//     }
+//   });
+
+//   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+//     if (url.startsWith('http://') || url.startsWith('https://')) {
+//       if (!url.includes('localhost') && !url.includes('127.0.0.1')) {
+//         shell.openExternal(url);
+//         return { action: 'deny' };
+//       }
+//     }
+//     return { action: 'deny' };
+//   });
+
+//   mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+//     const parsedUrl = new URL(navigationUrl);
+//     if (parsedUrl.origin !== 'http://localhost:8888') {
+//       event.preventDefault();
+//       shell.openExternal(navigationUrl);
+//     }
+//   });
+
+//   mainWindow.webContents.on('new-window', (event, url) => {
+//     event.preventDefault();
+//     shell.openExternal(url);
+//   });
+
+//   mainWindow.on('closed', () => {
+//     mainWindow = null;
+//     killAllProcesses();
+//   });
+// }
+
+// function killAllProcesses() {
+//   if (netlifyProcess) {
+//     netlifyProcess.kill();
+//     netlifyProcess = null;
+//   }
+//   if (scraperProcess) {
+//     scraperProcess.kill();
+//     scraperProcess = null;
+//   }
+//   if (staticServer) {
+//     staticServer.close();
+//     staticServer = null;
+//   }
+// }
+
+// function checkServerReady(port, maxAttempts = 30) {
+//   return new Promise((resolve, reject) => {
+//     let attempts = 0;
+//     const checkServer = () => {
+//       attempts++;
+//       const req = http.get(`http://localhost:${port}`, (res) => {
+//         console.log(`Server is ready on port ${port}`);
+//         resolve(true);
+//       });
+//       req.on('error', (err) => {
+//         if (attempts >= maxAttempts) {
+//           console.error(`Server not ready after ${maxAttempts} attempts`);
+//           reject(err);
+//         } else {
+//           console.log(`Attempt ${attempts}: Server not ready yet, retrying in 1 second...`);
+//           setTimeout(checkServer, 1000);
+//         }
+//       });
+//       req.setTimeout(1000, () => {
+//         req.destroy();
+//         if (attempts >= maxAttempts) {
+//           reject(new Error('Server check timeout'));
+//         } else {
+//           setTimeout(checkServer, 1000);
+//         }
+//       });
+//     };
+//     checkServer();
+//   });
+// }
+
+// async function startBackendServices() {
+//   const serverPort = 8888;
+
+//   if (isDev) {
+//     // В режиме разработки запускаем netlify dev
+//     console.log('Starting Netlify dev server...');
+//     netlifyProcess = spawn('npx', ['netlify', 'dev'], {
+//       cwd: process.cwd(),
+//       stdio: 'inherit',
+//       shell: true,
+//       env: {
+//         ...process.env,
+//         BROWSER: 'none',
+//         NODE_ENV: 'development'
+//       }
+//     });
+
+//     netlifyProcess.on('error', (error) => {
+//       console.error('Netlify process error:', error);
+//     });
+//   } else {
+//     // В продакшене запускаем статический сервер
+//     console.log('Starting static server...');
+//     try {
+//       const createStaticServer = require('./server/staticServer.cjs');
+//       staticServer = createStaticServer(serverPort);
+//     } catch (error) {
+//       console.error('Failed to start static server:', error);
+//       throw error;
+//     }
+//   }
+
+//   // Ждем готовности сервера
+//   try {
+//     await checkServerReady(serverPort);
+//     console.log('Web server is ready!');
+//   } catch (error) {
+//     console.error('Web server failed to start:', error);
+//     throw error;
+//   }
+
+//   // Запускаем scraper после того как веб-сервер готов
+//   console.log('Starting scraper...');
+//   // Всегда используем относительный путь от __dirname
+//   const scraperPath = path.join(__dirname, 'server', 'doffinScraper.js');
+//   if (!fs.existsSync(scraperPath)) {
+//     console.error(`Scraper file not found: ${scraperPath}`);
+//     throw new Error(`Scraper file not found: ${scraperPath}`);
+//   }
+
+//   scraperProcess = spawn('node', [scraperPath], {
+//     cwd: process.cwd(),
+//     stdio: 'inherit',
+//     shell: true
+//   });
+
+//   scraperProcess.on('error', (error) => {
+//     console.error('Scraper process error:', error);
+//   });
+// }
+
+// app.whenReady().then(async () => {
+//   try {
+//     console.log('Starting backend services...');
+//     await startBackendServices();
+//     console.log('Creating Electron window...');
+//     createWindow();
+//   } catch (error) {
+//     console.error('Failed to start application:', error);
+//     app.quit();
+//   }
+// });
+
+// app.on('window-all-closed', () => {
+//   killAllProcesses();
+//   if (process.platform !== 'darwin') {
+//     app.quit();
+//   }
+// });
+
+// app.on('activate', () => {
+//   if (BrowserWindow.getAllWindows().length === 0) {
+//     createWindow();
+//   }
+// });
+
+// app.on('before-quit', () => {
+//   killAllProcesses();
+// });
+
+// process.on('SIGINT', () => {
+//   killAllProcesses();
+//   process.exit();
+// });
+
+// process.on('SIGTERM', () => {
+//   killAllProcesses();
+//   process.exit();
+// });
+
+// app.on('web-contents-created', (event, contents) => {
+//   contents.on('new-window', (event, navigationUrl) => {
+//     event.preventDefault();
+//     shell.openExternal(navigationUrl);
+//   });
+
+//   contents.on('will-navigate', (event, navigationUrl) => {
+//     const parsedUrl = new URL(navigationUrl);
+//     if (parsedUrl.origin !== 'http://localhost:8888') {
+//       event.preventDefault();
+//       shell.openExternal(navigationUrl);
+//     }
+//   });
+// });
 
 
 

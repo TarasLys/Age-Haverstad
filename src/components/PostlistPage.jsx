@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import MapComponent from "./MapComponent";
 import DynamicListComponent from "./DynamicListComponent";
-import { sendTendersWithMapWorkflow } from "../utils/sendTendersWithMapEmailjs";
+// Удаляем импорт sendTendersWithMapWorkflow
+// import { sendTendersWithMapWorkflow } from "../utils/sendTendersWithMapEmailjs";
 
 function EmailStatus({ status }) {
   if (!status) return null;
@@ -64,30 +65,38 @@ const PostlistPage = () => {
     };
   }, [autoLoad]);
 
-  // Ручная отправка email (только со свежим fetch), теперь с проверкой на пустой массив!
-  const handleManualSend = useCallback(async () => {
-    setEmailStatus({ type: "info", message: "Отправляю e-post..." });
-    try {
-      const resp = await fetch("http://localhost:4003/cron_doffin_last.json?t=" + Date.now(), { cache: "no-store" });
-      const data = await resp.json();
-      const tenders = data.results || [];
-      if (!Array.isArray(tenders) || tenders.length === 0) {
-        setEmailStatus({ type: "warning", message: "Нет тендеров для отправки — рассылка отменена." });
-        return;
-      }
-      await sendTendersWithMapWorkflow({
+  // Новый способ отправки email через IPC (Nodemailer)
+const handleManualSend = useCallback(async () => {
+  setEmailStatus({ type: "info", message: "Отправляю e-post..." });
+  try {
+    const resp = await fetch("http://localhost:4003/cron_doffin_last.json?t=" + Date.now(), { cache: "no-store" });
+    const data = await resp.json();
+    const tenders = data.results || [];
+    if (!Array.isArray(tenders) || tenders.length === 0) {
+      setEmailStatus({ type: "warning", message: "Нет тендеров для отправки — рассылка отменена." });
+      return;
+    }
+
+    // IPC вызов main process Electron для отправки email через Nodemailer
+    // window.electronAPI должен быть определён в preload.js
+    if (window.electronAPI && window.electronAPI.sendTendersWithMap) {
+      // ВОТ СЮДА ДОБАВЬ ЛОГ:
+      console.log('ВЫЗЫВАЕМ window.electronAPI.sendTendersWithMap', window.electronAPI);
+      await window.electronAPI.sendTendersWithMap({
         tenders,
         mapContainerId: "map-root",
         chunkNumber: 1,
         chunkTotal: 1,
-        onStatus: setEmailStatus,
       });
       setEmailStatus({ type: "success", message: "E-posten ble sendt vellykket!" });
       alreadySentTodayRef.current = true;
-    } catch (e) {
-      setEmailStatus({ type: "error", message: "Feil ved sending av e-post: " + (e.message || e) });
+    } else {
+      throw new Error("IPC API для отправки email не найден. Проверьте preload.js и main process.");
     }
-  }, []);
+  } catch (e) {
+    setEmailStatus({ type: "error", message: "Feil ved sending av e-post: " + (e.message || e) });
+  }
+}, []);
 
   // Показываем статус и ставим флаг для автоотправки после рендера карты
   useEffect(() => {
@@ -191,6 +200,200 @@ const PostlistPage = () => {
 };
 
 export default PostlistPage;
+
+//работает с Resend// import React, { useState, useEffect, useRef, useCallback } from "react";
+// import MapComponent from "./MapComponent";
+// import DynamicListComponent from "./DynamicListComponent";
+// import { sendTendersWithMapWorkflow } from "../utils/sendTendersWithMapEmailjs";
+
+// function EmailStatus({ status }) {
+//   if (!status) return null;
+//   let color = "#1976d2";
+//   if (status.type === "success") color = "green";
+//   if (status.type === "error") color = "red";
+//   if (status.type === "info") color = "#1976d2";
+//   if (status.type === "warning") color = "#ff9800";
+//   return (
+//     <div style={{
+//       margin: "10px 0",
+//       padding: "10px",
+//       border: `1px solid ${color}`,
+//       borderRadius: "6px",
+//       color,
+//       background: "#f7f9fa"
+//     }}>
+//       {status.message}
+//     </div>
+//   );
+// }
+
+// const PostlistPage = () => {
+//   const [locations, setLocations] = useState([]);
+//   const [activeTender, setActiveTender] = useState(null);
+//   const [autoLoad, setAutoLoad] = useState(true);
+//   const [cronNotices, setCronNotices] = useState([]);
+//   const [cronLoading, setCronLoading] = useState(false);
+//   const [cronError, setCronError] = useState(null);
+//   const [emailStatus, setEmailStatus] = useState(null);
+
+//   const listRef = useRef();
+//   const alreadyStatusShownTodayRef = useRef(false);
+//   const alreadySentTodayRef = useRef(false);
+//   const needToAutoSendRef = useRef(false);
+
+//   // Автоматическая загрузка свежих данных каждую минуту
+//   useEffect(() => {
+//     let intervalId;
+//     async function fetchCronData() {
+//       setCronLoading(true);
+//       setCronError(null);
+//       try {
+//         const resp = await fetch("http://localhost:4003/cron_doffin_last.json", { cache: "no-store" });
+//         if (!resp.ok) throw new Error("Feil ved загрузке cron-данных");
+//         const data = await resp.json();
+//         setCronNotices(data.results || []);
+//       } catch (e) {
+//         setCronError(e.message || "Feil ved загрузке cron-данных");
+//         setCronNotices([]);
+//       }
+//       setCronLoading(false);
+//     }
+//     if (autoLoad) {
+//       fetchCronData();
+//       intervalId = setInterval(fetchCronData, 60000);
+//     }
+//     return () => {
+//       if (intervalId) clearInterval(intervalId);
+//     };
+//   }, [autoLoad]);
+
+//   // Ручная отправка email (только со свежим fetch), теперь с проверкой на пустой массив!
+//   const handleManualSend = useCallback(async () => {
+//     setEmailStatus({ type: "info", message: "Отправляю e-post..." });
+//     try {
+//       const resp = await fetch("http://localhost:4003/cron_doffin_last.json?t=" + Date.now(), { cache: "no-store" });
+//       const data = await resp.json();
+//       const tenders = data.results || [];
+//       if (!Array.isArray(tenders) || tenders.length === 0) {
+//         setEmailStatus({ type: "warning", message: "Нет тендеров для отправки — рассылка отменена." });
+//         return;
+//       }
+//       await sendTendersWithMapWorkflow({
+//         tenders,
+//         mapContainerId: "map-root",
+//         chunkNumber: 1,
+//         chunkTotal: 1,
+//         onStatus: setEmailStatus,
+//       });
+//       setEmailStatus({ type: "success", message: "E-posten ble sendt vellykket!" });
+//       alreadySentTodayRef.current = true;
+//     } catch (e) {
+//       setEmailStatus({ type: "error", message: "Feil ved sending av e-post: " + (e.message || e) });
+//     }
+//   }, []);
+
+//   // Показываем статус и ставим флаг для автоотправки после рендера карты
+//   useEffect(() => {
+//     if (!autoLoad) return;
+//     const intervalId = setInterval(() => {
+//       const now = new Date();
+//       const osloNow = new Date(now.toLocaleString("en-US", { timeZone: "Europe/Oslo" }));
+//       const hours = osloNow.getHours();
+//       const minutes = osloNow.getMinutes();
+
+//       if (hours === 15 && minutes === 1 && !alreadyStatusShownTodayRef.current && !alreadySentTodayRef.current) {
+//         setEmailStatus({ type: "info", message: "Ждём обновления карты для e-post..." });
+//         needToAutoSendRef.current = true;
+//         alreadyStatusShownTodayRef.current = true;
+//       }
+//       // Сброс флага на следующий день
+//       if (hours !== 15 || minutes !== 1) {
+//         alreadyStatusShownTodayRef.current = false;
+//         alreadySentTodayRef.current = false;
+//         needToAutoSendRef.current = false;
+//       }
+//     }, 10000); // Проверяем каждые 10 секунд
+//     return () => clearInterval(intervalId);
+//   }, [autoLoad]);
+
+//   // Автоматическая отправка email только после обновления карты
+//   const handleMapRendered = useCallback(() => {
+//     if (needToAutoSendRef.current && !alreadySentTodayRef.current) {
+//       handleManualSend();
+//       needToAutoSendRef.current = false;
+//     }
+//   }, [handleManualSend]);
+
+//   // Ручное обновление данных
+//   const handleManualUpdate = async () => {
+//     setCronLoading(true);
+//     setCronError(null);
+//     try {
+//       const resp = await fetch("http://localhost:4003/cron_doffin_last.json", { cache: "no-store" });
+//       if (!resp.ok) throw new Error("Feil ved загрузке cron-данных");
+//       const data = await resp.json();
+//       setCronNotices(data.results || []);
+//     } catch (e) {
+//       setCronError(e.message || "Feil ved загрузке cron-данных");
+//       setCronNotices([]);
+//       setEmailStatus({ type: "error", message: e.message || "Feil ved загрузке cron-данных" });
+//     }
+//     setCronLoading(false);
+//   };
+
+//   const handleMarkerDoubleClick = (index) => {
+//     setActiveTender(index);
+//     if (listRef.current && listRef.current.scrollToTender) {
+//       listRef.current.scrollToTender(index);
+//     }
+//   };
+
+//   return (
+//     <div style={{ display: "flex", height: "100vh" }}>
+//       <div style={{ flex: 1, overflowY: "auto" }}>
+//         <div style={{ padding: "10px 20px 0 20px", background: "#f7f9fa" }}>
+//           <label style={{ fontWeight: 500, fontSize: "16px", display: "block" }}>
+//             <input
+//               type="checkbox"
+//               checked={autoLoad}
+//               onChange={() => setAutoLoad((v) => !v)}
+//               style={{ marginRight: "8px" }}
+//             />
+//             Vis automatisk de siste anbudene (cron 15:00)
+//           </label>
+//           <button onClick={handleManualUpdate} style={{ marginLeft: 12, marginBottom: 8 }}>
+//             Обновить данные вручную
+//           </button>
+//           <button onClick={handleManualSend} style={{ marginLeft: 12, marginBottom: 8 }}>
+//             Отправить e-post вручную
+//           </button>
+//         </div>
+//         <EmailStatus status={emailStatus} />
+//         <DynamicListComponent
+//           ref={listRef}
+//           setLocations={setLocations}
+//           activeTender={activeTender}
+//           notices={autoLoad ? cronNotices : undefined}
+//           disableLoadButton={autoLoad}
+//           onTenderClick={setActiveTender}
+//         />
+//         {autoLoad && cronLoading && <p style={{ padding: "20px" }}>Laster...</p>}
+//         {autoLoad && cronError && <p style={{ color: "red", padding: "20px" }}>{cronError}</p>}
+//       </div>
+//       <div style={{ flex: 1 }}>
+//         <div id="map-root" style={{ width: "100%", height: "100%" }}>
+//           <MapComponent
+//             locations={autoLoad ? cronNotices : locations}
+//             onMarkerDoubleClick={handleMarkerDoubleClick}
+//             onRendered={handleMapRendered}
+//           />
+//         </div>
+//       </div>
+//     </div>
+//   );
+// };
+
+// export default PostlistPage;
 
 
 // import React, { useState, useEffect, useRef, useCallback } from "react";

@@ -1,7 +1,8 @@
 import html2canvas from "html2canvas";
 
-/* ...остальной код без изменений... */
-
+/**
+ * Получить сообщение об ошибке в виде строки
+ */
 function getErrorMessage(e) {
   if (!e) return "Unknown error";
   if (typeof e === "string") return e;
@@ -14,6 +15,9 @@ function getErrorMessage(e) {
   }
 }
 
+/**
+ * Преобразовать массив тендеров в строки таблицы HTML
+ */
 function tendersToRows(tenders) {
   if (!Array.isArray(tenders) || tenders.length === 0) {
     return `<tr><td colspan="4" style="text-align:center;">Ingen anbud å sende.</td></tr>`;
@@ -30,6 +34,9 @@ function tendersToRows(tenders) {
   `).join("");
 }
 
+/**
+ * Получить base64 скриншот карты
+ */
 export async function getMapScreenshot(mapContainerId = "map-root") {
   const mapElement = document.getElementById(mapContainerId);
   if (!mapElement) {
@@ -45,6 +52,9 @@ export async function getMapScreenshot(mapContainerId = "map-root") {
   return base64;
 }
 
+/**
+ * Загрузить base64 картинку на imgur через серверless endpoint
+ */
 export async function uploadBase64ToImgurViaServerless(base64) {
   if (!base64 || typeof base64 !== "string" || !base64.startsWith("data:image/")) {
     console.error("[uploadBase64ToImgurViaServerless] base64 невалидный!", base64 ? base64.slice(0, 50) : base64);
@@ -72,99 +82,9 @@ export async function uploadBase64ToImgurViaServerless(base64) {
   throw new Error(data.error || data.details || "Unknown error");
 }
 
-
-
-export async function sendTendersWithMapResend({
-  tenders,
-  mapUrl = "",
-  chunkNumber = 1,
-  chunkTotal = 1
-}) {
-  if (!Array.isArray(tenders)) {
-    throw new Error("tenders должен быть массивом");
-  }
-  if (typeof mapUrl !== "string") {
-    throw new Error("mapUrl должен быть строкой");
-  }
-
-  const html = `
-    <h2>Siste anbud og kart (automatisk utsending)</h2>
-    <p>Часть ${chunkNumber} из ${chunkTotal}</p>
-    <table style="border-collapse:collapse;width:100%;margin-bottom:16px;">
-      <thead>
-        <tr>
-          <th style="border:1px solid #eaeaea;padding:8px;">Dato</th>
-          <th style="border:1px solid #eaeaea;padding:8px;">Tittel</th>
-          <th style="border:1px solid #eaeaea;padding:8px;">Kjøper</th>
-          <th style="border:1px solid #eaeaea;padding:8px;">Lenke</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${tendersToRows(tenders)}
-      </tbody>
-    </table>
-    ${mapUrl ? `<div><img src="${mapUrl}" alt="Kart" style="max-width:100%;border:1px solid #eaeaea;"/></div>` : ""}
-  `;
-
-  const toRaw = import.meta.env.VITE_TO_EMAIL;
-  const to = toRaw.includes(",")
-    ? toRaw.split(",").map(e => e.trim()).filter(Boolean)
-    : toRaw.trim();
-
-  const payload = {
-    to,
-    from: import.meta.env.VITE_FROM_EMAIL,
-    subject: "Siste anbud og kart (automatisk utsending)",
-    html
-  };
-
-  const endpoint = "/api/send-resend";
-
-  try {
-    console.log("[sendTendersWithMapResend] Отправка письма через Resend. Payload:", payload);
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const text = await res.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
-    }
-    if (!res.ok) {
-      if (typeof data === "object") {
-        console.error("[sendTendersWithMapResend] Ошибка Resend:", data);
-        throw new Error(
-          "Ошибка Resend: " +
-          (data.error?.message || data.error || data.message || JSON.stringify(data))
-        );
-      }
-      throw new Error(data || "Unknown error from backend Resend proxy");
-    }
-    if (data.success) {
-      console.log("[sendTendersWithMapResend] Письмо успешно отправлено через Resend:", data);
-      return data;
-    }
-    throw new Error(
-      (typeof data === "object" && (data.error?.message || data.error || data.message)) ||
-      data ||
-      "Unknown error from backend Resend proxy"
-    );
-  } catch (e) {
-    const msg = getErrorMessage(e);
-    console.error("[sendTendersWithMapResend] Ошибка:", msg);
-    throw new Error("Ошибка при отправке email через Resend backend: " + msg);
-  }
-}
-
-
-
-
-
-
+/**
+ * Основная функция: формирует письмо и отправляет его через Nodemailer (Electron IPC)
+ */
 export async function sendTendersWithMapWorkflow({
   tenders,
   mapContainerId = "map-root",
@@ -207,18 +127,51 @@ export async function sendTendersWithMapWorkflow({
     console.log("mapUrl:", mapUrl);
     console.log("chunkNumber:", chunkNumber, "chunkTotal:", chunkTotal);
 
-    if (onStatus) onStatus({ type: "info", message: "Отправляю email..." });
-    console.log("[sendTendersWithMapWorkflow] Отправляю email...");
-    const emailResult = await sendTendersWithMapResend({
-      tenders,
-      mapUrl,
-      chunkNumber,
-      chunkTotal
-    });
+    // Формируем email для Nodemailer/Electron
+    let to = "";
+    if (window?.env?.VITE_TO_EMAIL) {
+      to = window.env.VITE_TO_EMAIL.includes(",")
+        ? window.env.VITE_TO_EMAIL.split(",").map(e => e.trim()).filter(Boolean)
+        : window.env.VITE_TO_EMAIL.trim();
+    }
+    const subject = "Siste anbud og kart (automatisk utsending)";
+    const html = `
+      <h2>Siste anbud og карт (automatisk utsending)</h2>
+      <p>Часть ${chunkNumber} из ${chunkTotal}</p>
+      <table style="border-collapse:collapse;width:100%;margin-bottom:16px;">
+        <thead>
+          <tr>
+            <th style="border:1px solid #eaeaea;padding:8px;">Dato</th>
+            <th style="border:1px solid #eaeaea;padding:8px;">Tittel</th>
+            <th style="border:1px solid #eaeaea;padding:8px;">Kjøper</th>
+            <th style="border:1px solid #eaeaea;padding:8px;">Lenke</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tendersToRows(tenders)}
+        </tbody>
+      </table>
+      ${mapUrl ? `<div><img src="${mapUrl}" alt="Kart" style="max-width:100%;border:1px solid #eaeaea;"/></div>` : ""}
+    `;
 
-    if (onStatus) onStatus({ type: "success", message: "Email успешно отправлен!" });
-    console.log("[sendTendersWithMapWorkflow] Email успешно отправлен!");
-    return emailResult;
+    if (onStatus) onStatus({ type: "info", message: "Письмо сформировано, отправляю..." });
+    console.log("[sendTendersWithMapWorkflow] Письмо сформировано, отправляю через IPC...");
+
+    // ОТПРАВКА ПИСЬМА через IPC/Electron (Nodemailer)
+    if (window.electronAPI && window.electronAPI.sendTendersWithMap) {
+      const result = await window.electronAPI.sendTendersWithMap({ to, subject, html });
+      if (result && result.success) {
+        if (onStatus) onStatus({ type: "success", message: "Email успешно отправлен!" });
+        console.log("[sendTendersWithMapWorkflow] Email успешно отправлен!");
+        return { success: true };
+      } else {
+        const errMsg = result && result.error ? result.error : "Неизвестная ошибка отправки";
+        if (onStatus) onStatus({ type: "error", message: "Ошибка отправки email: " + errMsg });
+        throw new Error(errMsg);
+      }
+    } else {
+      throw new Error("IPC API для отправки email не найден. Проверьте preload.js и main process.");
+    }
   } catch (e) {
     const msg = getErrorMessage(e);
     if (onStatus) onStatus({ type: "error", message: "Ошибка: " + msg });
@@ -227,6 +180,9 @@ export async function sendTendersWithMapWorkflow({
   }
 }
 
+/**
+ * Получить тендеры с сервера (пример)
+ */
 export async function getTenders() {
   const now = new Date();
   const osloNow = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Oslo' }));
@@ -256,10 +212,7 @@ export async function getTenders() {
 }
 
 /**
- * Централизованная автоматическая проверка и отправка тендеров:
- * - В 15:00: обновляет данные (getTenders), обновляет компоненты через событие "TENDERS_UPDATED"
- * - В 15:01: отправляет email с актуальными тендерами (fetch cron_doffin_last.json), только после того как карта обновилась (ждём событие MAP_UPDATED)
- * Используйте только эту функцию для расписания!
+ * Автоматическая отправка тендеров по расписанию (только через Nodemailer)
  */
 export function setupDailyTenderEmail(
   getTenders,
@@ -271,7 +224,6 @@ export function setupDailyTenderEmail(
   let alreadyUpdatedToday = false;
   let alreadySentToday = false;
 
-  // Слушаем событие MAP_UPDATED (UI должен диспатчить его после обновления карты)
   function waitForMapUpdated(timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
       let timer = null;
@@ -339,7 +291,7 @@ export function setupDailyTenderEmail(
           alreadySentToday = true;
           return;
         }
-        if (onStatus) onStatus({ type: "info", message: "Отправляю e-post..." });
+        if (onStatus) onStatus({ type: "info", message: "Формирую и отправляю письмо для e-post..." });
         await workflow({
           tenders: cronNotices,
           mapContainerId,
@@ -369,6 +321,1161 @@ export function setupDailyTenderEmail(
     clearInterval(timer);
   };
 }
+
+// import html2canvas from "html2canvas";
+
+// /* ...остальной код без изменений... */
+
+// function getErrorMessage(e) {
+//   if (!e) return "Unknown error";
+//   if (typeof e === "string") return e;
+//   if (e.message) return e.message;
+//   if (e.text) return e.text;
+//   try {
+//     return JSON.stringify(e);
+//   } catch {
+//     return String(e);
+//   }
+// }
+
+// function tendersToRows(tenders) {
+//   if (!Array.isArray(tenders) || tenders.length === 0) {
+//     return `<tr><td colspan="4" style="text-align:center;">Ingen anbud å sende.</td></tr>`;
+//   }
+//   return tenders.map(t => `
+//     <tr>
+//       <td style="border: 1px solid #eaeaea; padding: 8px;">${t.publicationDate || ""}</td>
+//       <td style="border: 1px solid #eaeaea; padding: 8px;">${t.title || ""}</td>
+//       <td style="border: 1px solid #eaeaea; padding: 8px;">${t.buyer || ""}</td>
+//       <td style="border: 1px solid #eaeaea; padding: 8px;">
+//         ${t.link ? `<a href="${t.link}" target="_blank" rel="noopener noreferrer">Åpne</a>` : ""}
+//       </td>
+//     </tr>
+//   `).join("");
+// }
+
+// export async function getMapScreenshot(mapContainerId = "map-root") {
+//   const mapElement = document.getElementById(mapContainerId);
+//   if (!mapElement) {
+//     console.error(`[getMapScreenshot] Элемент с id "${mapContainerId}" не найден!`);
+//     throw new Error("Map element not found");
+//   }
+//   const canvas = await html2canvas(mapElement, { useCORS: true });
+//   const base64 = canvas.toDataURL("image/png");
+//   if (!base64 || typeof base64 !== "string") {
+//     console.error("[getMapScreenshot] Не удалось получить base64 из canvas!");
+//     throw new Error("Не удалось получить base64 скриншота карты");
+//   }
+//   return base64;
+// }
+
+// export async function uploadBase64ToImgurViaServerless(base64) {
+//   if (!base64 || typeof base64 !== "string" || !base64.startsWith("data:image/")) {
+//     console.error("[uploadBase64ToImgurViaServerless] base64 невалидный!", base64 ? base64.slice(0, 50) : base64);
+//     throw new Error("base64 должен быть строкой data:image/...");
+//   }
+//   const endpoint = "/.netlify/functions/uploadToImgur";
+//   const res = await fetch(endpoint, {
+//     method: "POST",
+//     headers: { "Content-Type": "application/json" },
+//     body: JSON.stringify({ image: base64 }),
+//   });
+//   const text = await res.text();
+//   let data;
+//   try {
+//     data = JSON.parse(text);
+//   } catch (e) {
+//     console.error('[uploadBase64ToImgurViaServerless] Не удалось распарсить JSON:', e, text);
+//     throw new Error("Некорректный ответ сервера imgur: " + text);
+//   }
+//   if (data.link) {
+//     console.log('[uploadBase64ToImgurViaServerless] Картинка успешно загружена на imgur:', data.link);
+//     return data.link;
+//   }
+//   console.error('[uploadBase64ToImgurViaServerless] Ошибка от Imgur:', data);
+//   throw new Error(data.error || data.details || "Unknown error");
+// }
+
+// // ... (закомментированные Resend функции без изменений)
+
+// /**
+//  * Теперь функция только формирует письмо и возвращает {to, subject, html}
+//  * Отправку письма делайте отдельно через window.electronAPI.sendTendersWithMap({to, subject, html})
+//  */
+// // export async function sendTendersWithMapWorkflow({
+// //   tenders,
+// //   mapContainerId = "map-root",
+// //   chunkNumber = 1,
+// //   chunkTotal = 1,
+// //   onStatus
+// // }) {
+// //   try {
+// //     if (!Array.isArray(tenders)) {
+// //       throw new Error("tenders должен быть массивом");
+// //     }
+// //     if (typeof mapContainerId !== "string") {
+// //       throw new Error("mapContainerId должен быть строкой");
+// //     }
+// //     if (onStatus && typeof onStatus !== "function") {
+// //       throw new Error("onStatus должен быть функцией");
+// //     }
+
+// //     if (onStatus) onStatus({ type: "info", message: "Делаю скриншот карты..." });
+// //     console.log("[sendTendersWithMapWorkflow] Делаю скриншот карты...");
+// //     const mapScreenshotBase64 = await getMapScreenshot(mapContainerId);
+// //     if (!mapScreenshotBase64 || typeof mapScreenshotBase64 !== "string") {
+// //       throw new Error("Не удалось получить скриншот карты");
+// //     }
+
+// //     if (onStatus) onStatus({ type: "info", message: "Загружаю карту на imgur..." });
+// //     console.log("[sendTendersWithMapWorkflow] Загружаю карту на imgur...");
+// //     const mapUrl = await uploadBase64ToImgurViaServerless(mapScreenshotBase64);
+// //     if (!mapUrl || typeof mapUrl !== "string" || !mapUrl.startsWith("http")) {
+// //       throw new Error("Ошибка загрузки карты на imgur");
+// //     }
+
+// //     console.log("[sendTendersWithMapWorkflow] ДАННЫЕ ДЛЯ EMAIL:");
+// //     console.log("tenders:", Array.isArray(tenders) ? tenders.map(t => ({
+// //       title: t.title,
+// //       publicationDate: t.publicationDate,
+// //       buyer: t.buyer,
+// //       link: t.link
+// //     })) : tenders);
+// //     console.log("mapUrl:", mapUrl);
+// //     console.log("chunkNumber:", chunkNumber, "chunkTotal:", chunkTotal);
+
+// //     // Формируем email для Nodemailer/Electron
+// //     let to = "";
+// //     if (window?.env?.VITE_TO_EMAIL) {
+// //       to = window.env.VITE_TO_EMAIL.includes(",")
+// //         ? window.env.VITE_TO_EMAIL.split(",").map(e => e.trim()).filter(Boolean)
+// //         : window.env.VITE_TO_EMAIL.trim();
+// //     }
+// //     const subject = "Siste anbud og kart (automatisk utsending)";
+// //     const html = `
+// //       <h2>Siste anbud og карт (automatisk utsending)</h2>
+// //       <p>Часть ${chunkNumber} из ${chunkTotal}</p>
+// //       <table style="border-collapse:collapse;width:100%;margin-bottom:16px;">
+// //         <thead>
+// //           <tr>
+// //             <th style="border:1px solid #eaeaea;padding:8px;">Dato</th>
+// //             <th style="border:1px solid #eaeaea;padding:8px;">Tittel</th>
+// //             <th style="border:1px solid #eaeaea;padding:8px;">Kjøper</th>
+// //             <th style="border:1px solid #eaeaea;padding:8px;">Lenke</th>
+// //           </tr>
+// //         </thead>
+// //         <tbody>
+// //           ${tendersToRows(tenders)}
+// //         </tbody>
+// //       </table>
+// //       ${mapUrl ? `<div><img src="${mapUrl}" alt="Kart" style="max-width:100%;border:1px solid #eaeaea;"/></div>` : ""}
+// //     `;
+
+// //     if (onStatus) onStatus({ type: "info", message: "Письмо сформировано, готово к отправке." });
+// //     console.log("[sendTendersWithMapWorkflow] Письмо сформировано, возвращаю объект для отправки.");
+
+// //     // Возвращаем объект, а не отправляем письмо!
+// //     return { to, subject, html };
+// //   } catch (e) {
+// //     const msg = getErrorMessage(e);
+// //     if (onStatus) onStatus({ type: "error", message: "Ошибка: " + msg });
+// //     console.error("[sendTendersWithMapWorkflow] Ошибка:", msg);
+// //     throw e;
+// //   }
+// // }
+// export async function sendTendersWithMapWorkflow({
+//   tenders,
+//   mapContainerId = "map-root",
+//   chunkNumber = 1,
+//   chunkTotal = 1,
+//   onStatus
+// }) {
+//   try {
+//     if (!Array.isArray(tenders)) {
+//       throw new Error("tenders должен быть массивом");
+//     }
+//     if (typeof mapContainerId !== "string") {
+//       throw new Error("mapContainerId должен быть строкой");
+//     }
+//     if (onStatus && typeof onStatus !== "function") {
+//       throw new Error("onStatus должен быть функцией");
+//     }
+
+//     if (onStatus) onStatus({ type: "info", message: "Делаю скриншот карты..." });
+//     console.log("[sendTendersWithMapWorkflow] Делаю скриншот карты...");
+//     const mapScreenshotBase64 = await getMapScreenshot(mapContainerId);
+//     if (!mapScreenshotBase64 || typeof mapScreenshotBase64 !== "string") {
+//       throw new Error("Не удалось получить скриншот карты");
+//     }
+
+//     if (onStatus) onStatus({ type: "info", message: "Загружаю карту на imgur..." });
+//     console.log("[sendTendersWithMapWorkflow] Загружаю карту на imgur...");
+//     const mapUrl = await uploadBase64ToImgurViaServerless(mapScreenshotBase64);
+//     if (!mapUrl || typeof mapUrl !== "string" || !mapUrl.startsWith("http")) {
+//       throw new Error("Ошибка загрузки карты на imgur");
+//     }
+
+//     console.log("[sendTendersWithMapWorkflow] ДАННЫЕ ДЛЯ EMAIL:");
+//     console.log("tenders:", Array.isArray(tenders) ? tenders.map(t => ({
+//       title: t.title,
+//       publicationDate: t.publicationDate,
+//       buyer: t.buyer,
+//       link: t.link
+//     })) : tenders);
+//     console.log("mapUrl:", mapUrl);
+//     console.log("chunkNumber:", chunkNumber, "chunkTotal:", chunkTotal);
+
+//     // Формируем email для Nodemailer/Electron
+//     let to = "";
+//     if (window?.env?.VITE_TO_EMAIL) {
+//       to = window.env.VITE_TO_EMAIL.includes(",")
+//         ? window.env.VITE_TO_EMAIL.split(",").map(e => e.trim()).filter(Boolean)
+//         : window.env.VITE_TO_EMAIL.trim();
+//     }
+//     const subject = "Siste anbud og kart (automatisk utsending)";
+//     const html = `
+//       <h2>Siste anbud og карт (automatisk utsending)</h2>
+//       <p>Часть ${chunkNumber} из ${chunkTotal}</p>
+//       <table style="border-collapse:collapse;width:100%;margin-bottom:16px;">
+//         <thead>
+//           <tr>
+//             <th style="border:1px solid #eaeaea;padding:8px;">Dato</th>
+//             <th style="border:1px solid #eaeaea;padding:8px;">Tittel</th>
+//             <th style="border:1px solid #eaeaea;padding:8px;">Kjøper</th>
+//             <th style="border:1px solid #eaeaea;padding:8px;">Lenke</th>
+//           </tr>
+//         </thead>
+//         <tbody>
+//           ${tendersToRows(tenders)}
+//         </tbody>
+//       </table>
+//       ${mapUrl ? `<div><img src="${mapUrl}" alt="Kart" style="max-width:100%;border:1px solid #eaeaea;"/></div>` : ""}
+//     `;
+
+//     if (onStatus) onStatus({ type: "info", message: "Письмо сформировано, отправляю..." });
+//     console.log("[sendTendersWithMapWorkflow] Письмо сформировано, отправляю через IPC...");
+
+//     // СРАЗУ ОТПРАВЛЯЕМ ПИСЬМО через IPC/Electron
+//     if (window.electronAPI && window.electronAPI.sendTendersWithMap) {
+//       await window.electronAPI.sendTendersWithMap({ to, subject, html });
+//       if (onStatus) onStatus({ type: "success", message: "Email успешно отправлен!" });
+//       return { success: true };
+//     } else {
+//       throw new Error("IPC API для отправки email не найден. Проверьте preload.js и main process.");
+//     }
+//   } catch (e) {
+//     const msg = getErrorMessage(e);
+//     if (onStatus) onStatus({ type: "error", message: "Ошибка: " + msg });
+//     console.error("[sendTendersWithMapWorkflow] Ошибка:", msg);
+//     throw e;
+//   }
+// }
+// export async function getTenders() {
+//   const now = new Date();
+//   const osloNow = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Oslo' }));
+//   const toDate = osloNow.toISOString().slice(0, 10);
+//   const fromDateObj = new Date(osloNow.getTime() - 24 * 60 * 60 * 1000);
+//   const fromDate = fromDateObj.toISOString().slice(0, 10);
+
+//   const body = {
+//     from: fromDate,
+//     to: toDate,
+//     location: 'NO020%2CNO081%2CNO085%2CNO083%2CNO084',
+//     cpv: '45000000,45100000'
+//   };
+
+//   console.log("[getTenders] Запрос на запуск скрабинга doffin:", body);
+
+//   const res = await fetch('http://localhost:4003/api/notices/doffin-scrape', {
+//     method: 'POST',
+//     headers: { 'Content-Type': 'application/json' },
+//     body: JSON.stringify(body)
+//   });
+
+//   if (!res.ok) throw new Error('Ошибка запуска парсера doffin');
+//   const data = await res.json();
+//   console.log("[getTenders] Получено тендеров после скрабинга:", Array.isArray(data.results) ? data.results.length : typeof data.results);
+//   return data.results;
+// }
+
+// /**
+//  * Централизованная автоматическая проверка и отправка тендеров:
+//  * - В 15:00: обновляет данные (getTenders), обновляет компоненты через событие "TENDERS_UPDATED"
+//  * - В 15:01: отправляет email с актуальными тендерами (fetch cron_doffin_last.json), только после того как карта обновилась (ждём событие MAP_UPDATED)
+//  * Используйте только эту функцию для расписания!
+//  */
+// export function setupDailyTenderEmail(
+//   getTenders,
+//   mapContainerId = "map-root",
+//   onStatus,
+//   workflow = sendTendersWithMapWorkflow
+// ) {
+//   console.log("[setupDailyTenderEmail] Запуск таймера автоотправки (async getTenders)");
+//   let alreadyUpdatedToday = false;
+//   let alreadySentToday = false;
+
+//   // Слушаем событие MAP_UPDATED (UI должен диспатчить его после обновления карты)
+//   function waitForMapUpdated(timeoutMs = 15000) {
+//     return new Promise((resolve, reject) => {
+//       let timer = null;
+//       function handler(e) {
+//         window.removeEventListener("MAP_UPDATED", handler);
+//         if (timer) clearTimeout(timer);
+//         resolve(e && e.detail ? e.detail : null);
+//       }
+//       window.addEventListener("MAP_UPDATED", handler);
+//       timer = setTimeout(() => {
+//         window.removeEventListener("MAP_UPDATED", handler);
+//         reject(new Error("MAP_UPDATED timeout"));
+//       }, timeoutMs);
+//     });
+//   }
+
+//   const timer = setInterval(async () => {
+//     const now = new Date();
+//     const osloNow = new Date(now.toLocaleString("en-US", { timeZone: "Europe/Oslo" }));
+//     const hours = osloNow.getHours();
+//     const minutes = osloNow.getMinutes();
+//     console.log(`[setupDailyTenderEmail] Проверка времени: ${hours}:${minutes}, alreadyUpdatedToday: ${alreadyUpdatedToday}, alreadySentToday: ${alreadySentToday}`);
+
+//     // 1. В 15:00 — обновить данные и инициировать обновление компонентов
+//     if (hours === 15 && minutes === 0 && !alreadyUpdatedToday) {
+//       try {
+//         if (onStatus) onStatus({ type: "info", message: "Обновляю тендеры за сутки..." });
+//         console.log("[setupDailyTenderEmail] Вызов getTenders (async) для обновления данных...");
+//         const freshTenders = await getTenders();
+//         console.log("[setupDailyTenderEmail] Получено тендеров:", Array.isArray(freshTenders) ? freshTenders.length : typeof freshTenders);
+//         if (typeof window !== "undefined" && window.dispatchEvent) {
+//           window.dispatchEvent(new CustomEvent("TENDERS_UPDATED", { detail: freshTenders }));
+//         }
+//         alreadyUpdatedToday = true;
+//       } catch (e) {
+//         const msg = getErrorMessage(e);
+//         if (onStatus) onStatus({ type: "error", message: "Ошибка обновления тендеров: " + msg });
+//         console.error("[setupDailyTenderEmail] Ошибка обновления тендеров:", msg);
+//       }
+//     }
+
+//     // 2. В 15:01 — отправить письмо с актуальными тендерами (fetch cron_doffin_last.json), только после обновления карты
+//     if (hours === 15 && minutes === 1 && !alreadySentToday) {
+//       try {
+//         if (onStatus) onStatus({ type: "info", message: "Ждём обновления карты для e-post..." });
+//         try {
+//           await waitForMapUpdated(15000); // 15 секунд максимум
+//         } catch (e) {
+//           if (onStatus) onStatus({ type: "warning", message: "Карта не обновилась вовремя, отправляем как есть." });
+//         }
+//         // --- КЛЮЧЕВОЕ: fetch актуальные данные, как в ручной отправке ---
+//         let cronNotices = [];
+//         try {
+//           const resp = await fetch("http://localhost:4003/cron_doffin_last.json?t=" + Date.now(), { cache: "no-store" });
+//           const data = await resp.json();
+//           cronNotices = data.results || [];
+//         } catch (e) {
+//           if (onStatus) onStatus({ type: "error", message: "Не удалось получить актуальные тендеры: " + (e.message || e) });
+//           cronNotices = [];
+//         }
+//         // --- ВАЖНО: ПРОВЕРКА НА ПУСТОЙ МАССИВ ---
+//         if (!Array.isArray(cronNotices) || cronNotices.length === 0) {
+//           if (onStatus) onStatus({ type: "warning", message: "Нет тендеров для отправки — рассылка отменена." });
+//           console.warn("[setupDailyTenderEmail] Автоматическая отправка отменена: нет тендеров.");
+//           alreadySentToday = true;
+//           return;
+//         }
+//         if (onStatus) onStatus({ type: "info", message: "Формирую письмо для e-post..." });
+//         // Получаем готовое письмо
+//         const { to, subject, html } = await workflow({
+//           tenders: cronNotices,
+//           mapContainerId,
+//           chunkNumber: 1,
+//           chunkTotal: 1,
+//           onStatus
+//         });
+//         // Отправляем через IPC
+//         if (window.electronAPI && window.electronAPI.sendTendersWithMap) {
+//           await window.electronAPI.sendTendersWithMap({ to, subject, html });
+//         } else {
+//           throw new Error("IPC API для отправки email не найден. Проверьте preload.js и main process.");
+//         }
+//         if (onStatus) onStatus({ type: "success", message: "E-posten ble sendt vellykket!" });
+//         alreadySentToday = true;
+//       } catch (e) {
+//         const msg = getErrorMessage(e);
+//         if (onStatus) onStatus({ type: "error", message: "Feil ved sending av e-post: " + msg });
+//         console.error("[setupDailyTenderEmail] Ошибка автоотправки:", msg);
+//       }
+//     }
+
+//     // Сброс флагов на следующий день
+//     if (hours !== 15 || (minutes !== 0 && minutes !== 1)) {
+//       alreadyUpdatedToday = false;
+//       alreadySentToday = false;
+//     }
+//   }, 60 * 1000);
+
+//   // Возвращаем функцию для остановки таймера (на случай размонтирования компонента)
+//   return () => {
+//     console.log("[setupDailyTenderEmail] Остановлен таймер автоотправки");
+//     clearInterval(timer);
+//   };
+// }
+
+// import html2canvas from "html2canvas";
+
+// /* ...остальной код без изменений... */
+
+// function getErrorMessage(e) {
+//   if (!e) return "Unknown error";
+//   if (typeof e === "string") return e;
+//   if (e.message) return e.message;
+//   if (e.text) return e.text;
+//   try {
+//     return JSON.stringify(e);
+//   } catch {
+//     return String(e);
+//   }
+// }
+
+// function tendersToRows(tenders) {
+//   if (!Array.isArray(tenders) || tenders.length === 0) {
+//     return `<tr><td colspan="4" style="text-align:center;">Ingen anbud å sende.</td></tr>`;
+//   }
+//   return tenders.map(t => `
+//     <tr>
+//       <td style="border: 1px solid #eaeaea; padding: 8px;">${t.publicationDate || ""}</td>
+//       <td style="border: 1px solid #eaeaea; padding: 8px;">${t.title || ""}</td>
+//       <td style="border: 1px solid #eaeaea; padding: 8px;">${t.buyer || ""}</td>
+//       <td style="border: 1px solid #eaeaea; padding: 8px;">
+//         ${t.link ? `<a href="${t.link}" target="_blank" rel="noopener noreferrer">Åpne</a>` : ""}
+//       </td>
+//     </tr>
+//   `).join("");
+// }
+
+// export async function getMapScreenshot(mapContainerId = "map-root") {
+//   const mapElement = document.getElementById(mapContainerId);
+//   if (!mapElement) {
+//     console.error(`[getMapScreenshot] Элемент с id "${mapContainerId}" не найден!`);
+//     throw new Error("Map element not found");
+//   }
+//   const canvas = await html2canvas(mapElement, { useCORS: true });
+//   const base64 = canvas.toDataURL("image/png");
+//   if (!base64 || typeof base64 !== "string") {
+//     console.error("[getMapScreenshot] Не удалось получить base64 из canvas!");
+//     throw new Error("Не удалось получить base64 скриншота карты");
+//   }
+//   return base64;
+// }
+
+// export async function uploadBase64ToImgurViaServerless(base64) {
+//   if (!base64 || typeof base64 !== "string" || !base64.startsWith("data:image/")) {
+//     console.error("[uploadBase64ToImgurViaServerless] base64 невалидный!", base64 ? base64.slice(0, 50) : base64);
+//     throw new Error("base64 должен быть строкой data:image/...");
+//   }
+//   const endpoint = "/.netlify/functions/uploadToImgur";
+//   const res = await fetch(endpoint, {
+//     method: "POST",
+//     headers: { "Content-Type": "application/json" },
+//     body: JSON.stringify({ image: base64 }),
+//   });
+//   const text = await res.text();
+//   let data;
+//   try {
+//     data = JSON.parse(text);
+//   } catch (e) {
+//     console.error('[uploadBase64ToImgurViaServerless] Не удалось распарсить JSON:', e, text);
+//     throw new Error("Некорректный ответ сервера imgur: " + text);
+//   }
+//   if (data.link) {
+//     console.log('[uploadBase64ToImgurViaServerless] Картинка успешно загружена на imgur:', data.link);
+//     return data.link;
+//   }
+//   console.error('[uploadBase64ToImgurViaServerless] Ошибка от Imgur:', data);
+//   throw new Error(data.error || data.details || "Unknown error");
+// }
+
+// // ... (закомментированные Resend функции без изменений)
+
+// export async function sendTendersWithMapWorkflow({
+//   tenders,
+//   mapContainerId = "map-root",
+//   chunkNumber = 1,
+//   chunkTotal = 1,
+//   onStatus
+// }) {
+//   try {
+//     if (!Array.isArray(tenders)) {
+//       throw new Error("tenders должен быть массивом");
+//     }
+//     if (typeof mapContainerId !== "string") {
+//       throw new Error("mapContainerId должен быть строкой");
+//     }
+//     if (onStatus && typeof onStatus !== "function") {
+//       throw new Error("onStatus должен быть функцией");
+//     }
+
+//     if (onStatus) onStatus({ type: "info", message: "Делаю скриншот карты..." });
+//     console.log("[sendTendersWithMapWorkflow] Делаю скриншот карты...");
+//     const mapScreenshotBase64 = await getMapScreenshot(mapContainerId);
+//     if (!mapScreenshotBase64 || typeof mapScreenshotBase64 !== "string") {
+//       throw new Error("Не удалось получить скриншот карты");
+//     }
+
+//     if (onStatus) onStatus({ type: "info", message: "Загружаю карту на imgur..." });
+//     console.log("[sendTendersWithMapWorkflow] Загружаю карту на imgur...");
+//     const mapUrl = await uploadBase64ToImgurViaServerless(mapScreenshotBase64);
+//     if (!mapUrl || typeof mapUrl !== "string" || !mapUrl.startsWith("http")) {
+//       throw new Error("Ошибка загрузки карты на imgur");
+//     }
+
+//     console.log("[sendTendersWithMapWorkflow] ДАННЫЕ ДЛЯ EMAIL:");
+//     console.log("tenders:", Array.isArray(tenders) ? tenders.map(t => ({
+//       title: t.title,
+//       publicationDate: t.publicationDate,
+//       buyer: t.buyer,
+//       link: t.link
+//     })) : tenders);
+//     console.log("mapUrl:", mapUrl);
+//     console.log("chunkNumber:", chunkNumber, "chunkTotal:", chunkTotal);
+
+//     // Формируем email для Nodemailer/Electron
+//     // Получаем to из глобального window.env или оставляем пустым (main process подставит из .env)
+//     let to = "";
+//     if (window?.env?.VITE_TO_EMAIL) {
+//       to = window.env.VITE_TO_EMAIL.includes(",")
+//         ? window.env.VITE_TO_EMAIL.split(",").map(e => e.trim()).filter(Boolean)
+//         : window.env.VITE_TO_EMAIL.trim();
+//     }
+//     const subject = "Siste anbud og kart (automatisk utsending)";
+//     const html = `
+//       <h2>Siste anbud og карт (automatisk utsending)</h2>
+//       <p>Часть ${chunkNumber} из ${chunkTotal}</p>
+//       <table style="border-collapse:collapse;width:100%;margin-bottom:16px;">
+//         <thead>
+//           <tr>
+//             <th style="border:1px solid #eaeaea;padding:8px;">Dato</th>
+//             <th style="border:1px solid #eaeaea;padding:8px;">Tittel</th>
+//             <th style="border:1px solid #eaeaea;padding:8px;">Kjøper</th>
+//             <th style="border:1px solid #eaeaea;padding:8px;">Lenke</th>
+//           </tr>
+//         </thead>
+//         <tbody>
+//           ${tendersToRows(tenders)}
+//         </tbody>
+//       </table>
+//       ${mapUrl ? `<div><img src="${mapUrl}" alt="Kart" style="max-width:100%;border:1px solid #eaeaea;"/></div>` : ""}
+//     `;
+
+//     if (onStatus) onStatus({ type: "info", message: "Отправляю email..." });
+//     console.log("[sendTendersWithMapWorkflow] Отправляю email...");
+
+//     // Новый вызов через IPC (Electron) — теперь передаём все нужные поля
+//     if (window.electronAPI && window.electronAPI.sendTendersWithMap) {
+//       await window.electronAPI.sendTendersWithMap({
+//         to, // если пусто — main process подставит из .env
+//         subject,
+//         html
+//       });
+//     } else {
+//       throw new Error("IPC API для отправки email не найден. Проверьте preload.js и main process.");
+//     }
+
+//     if (onStatus) onStatus({ type: "success", message: "Email успешно отправлен!" });
+//     console.log("[sendTendersWithMapWorkflow] Email успешно отправлен!");
+//     return { success: true };
+//   } catch (e) {
+//     const msg = getErrorMessage(e);
+//     if (onStatus) onStatus({ type: "error", message: "Ошибка: " + msg });
+//     console.error("[sendTendersWithMapWorkflow] Ошибка:", msg);
+//     throw e;
+//   }
+// }
+
+// export async function getTenders() {
+//   const now = new Date();
+//   const osloNow = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Oslo' }));
+//   const toDate = osloNow.toISOString().slice(0, 10);
+//   const fromDateObj = new Date(osloNow.getTime() - 24 * 60 * 60 * 1000);
+//   const fromDate = fromDateObj.toISOString().slice(0, 10);
+
+//   const body = {
+//     from: fromDate,
+//     to: toDate,
+//     location: 'NO020%2CNO081%2CNO085%2CNO083%2CNO084',
+//     cpv: '45000000,45100000'
+//   };
+
+//   console.log("[getTenders] Запрос на запуск скрабинга doffin:", body);
+
+//   const res = await fetch('http://localhost:4003/api/notices/doffin-scrape', {
+//     method: 'POST',
+//     headers: { 'Content-Type': 'application/json' },
+//     body: JSON.stringify(body)
+//   });
+
+//   if (!res.ok) throw new Error('Ошибка запуска парсера doffin');
+//   const data = await res.json();
+//   console.log("[getTenders] Получено тендеров после скрабинга:", Array.isArray(data.results) ? data.results.length : typeof data.results);
+//   return data.results;
+// }
+
+// /**
+//  * Централизованная автоматическая проверка и отправка тендеров:
+//  * - В 15:00: обновляет данные (getTenders), обновляет компоненты через событие "TENDERS_UPDATED"
+//  * - В 15:01: отправляет email с актуальными тендерами (fetch cron_doffin_last.json), только после того как карта обновилась (ждём событие MAP_UPDATED)
+//  * Используйте только эту функцию для расписания!
+//  */
+// export function setupDailyTenderEmail(
+//   getTenders,
+//   mapContainerId = "map-root",
+//   onStatus,
+//   workflow = sendTendersWithMapWorkflow
+// ) {
+//   console.log("[setupDailyTenderEmail] Запуск таймера автоотправки (async getTenders)");
+//   let alreadyUpdatedToday = false;
+//   let alreadySentToday = false;
+
+//   // Слушаем событие MAP_UPDATED (UI должен диспатчить его после обновления карты)
+//   function waitForMapUpdated(timeoutMs = 15000) {
+//     return new Promise((resolve, reject) => {
+//       let timer = null;
+//       function handler(e) {
+//         window.removeEventListener("MAP_UPDATED", handler);
+//         if (timer) clearTimeout(timer);
+//         resolve(e && e.detail ? e.detail : null);
+//       }
+//       window.addEventListener("MAP_UPDATED", handler);
+//       timer = setTimeout(() => {
+//         window.removeEventListener("MAP_UPDATED", handler);
+//         reject(new Error("MAP_UPDATED timeout"));
+//       }, timeoutMs);
+//     });
+//   }
+
+//   const timer = setInterval(async () => {
+//     const now = new Date();
+//     const osloNow = new Date(now.toLocaleString("en-US", { timeZone: "Europe/Oslo" }));
+//     const hours = osloNow.getHours();
+//     const minutes = osloNow.getMinutes();
+//     console.log(`[setupDailyTenderEmail] Проверка времени: ${hours}:${minutes}, alreadyUpdatedToday: ${alreadyUpdatedToday}, alreadySentToday: ${alreadySentToday}`);
+
+//     // 1. В 15:00 — обновить данные и инициировать обновление компонентов
+//     if (hours === 15 && minutes === 0 && !alreadyUpdatedToday) {
+//       try {
+//         if (onStatus) onStatus({ type: "info", message: "Обновляю тендеры за сутки..." });
+//         console.log("[setupDailyTenderEmail] Вызов getTenders (async) для обновления данных...");
+//         const freshTenders = await getTenders();
+//         console.log("[setupDailyTenderEmail] Получено тендеров:", Array.isArray(freshTenders) ? freshTenders.length : typeof freshTenders);
+//         if (typeof window !== "undefined" && window.dispatchEvent) {
+//           window.dispatchEvent(new CustomEvent("TENDERS_UPDATED", { detail: freshTenders }));
+//         }
+//         alreadyUpdatedToday = true;
+//       } catch (e) {
+//         const msg = getErrorMessage(e);
+//         if (onStatus) onStatus({ type: "error", message: "Ошибка обновления тендеров: " + msg });
+//         console.error("[setupDailyTenderEmail] Ошибка обновления тендеров:", msg);
+//       }
+//     }
+
+//     // 2. В 15:01 — отправить письмо с актуальными тендерами (fetch cron_doffin_last.json), только после обновления карты
+//     if (hours === 15 && minutes === 1 && !alreadySentToday) {
+//       try {
+//         if (onStatus) onStatus({ type: "info", message: "Ждём обновления карты для e-post..." });
+//         try {
+//           await waitForMapUpdated(15000); // 15 секунд максимум
+//         } catch (e) {
+//           if (onStatus) onStatus({ type: "warning", message: "Карта не обновилась вовремя, отправляем как есть." });
+//         }
+//         // --- КЛЮЧЕВОЕ: fetch актуальные данные, как в ручной отправке ---
+//         let cronNotices = [];
+//         try {
+//           const resp = await fetch("http://localhost:4003/cron_doffin_last.json?t=" + Date.now(), { cache: "no-store" });
+//           const data = await resp.json();
+//           cronNotices = data.results || [];
+//         } catch (e) {
+//           if (onStatus) onStatus({ type: "error", message: "Не удалось получить актуальные тендеры: " + (e.message || e) });
+//           cronNotices = [];
+//         }
+//         // --- ВАЖНО: ПРОВЕРКА НА ПУСТОЙ МАССИВ ---
+//         if (!Array.isArray(cronNotices) || cronNotices.length === 0) {
+//           if (onStatus) onStatus({ type: "warning", message: "Нет тендеров для отправки — рассылка отменена." });
+//           console.warn("[setupDailyTenderEmail] Автоматическая отправка отменена: нет тендеров.");
+//           alreadySentToday = true;
+//           return;
+//         }
+//         if (onStatus) onStatus({ type: "info", message: "Отправляю e-post..." });
+//         await workflow({
+//           tenders: cronNotices,
+//           mapContainerId,
+//           chunkNumber: 1,
+//           chunkTotal: 1,
+//           onStatus
+//         });
+//         if (onStatus) onStatus({ type: "success", message: "E-posten ble sendt vellykket!" });
+//         alreadySentToday = true;
+//       } catch (e) {
+//         const msg = getErrorMessage(e);
+//         if (onStatus) onStatus({ type: "error", message: "Feil ved sending av e-post: " + msg });
+//         console.error("[setupDailyTenderEmail] Ошибка автоотправки:", msg);
+//       }
+//     }
+
+//     // Сброс флагов на следующий день
+//     if (hours !== 15 || (minutes !== 0 && minutes !== 1)) {
+//       alreadyUpdatedToday = false;
+//       alreadySentToday = false;
+//     }
+//   }, 60 * 1000);
+
+//   // Возвращаем функцию для остановки таймера (на случай размонтирования компонента)
+//   return () => {
+//     console.log("[setupDailyTenderEmail] Остановлен таймер автоотправки");
+//     clearInterval(timer);
+//   };
+// }
+
+// import html2canvas from "html2canvas";
+
+// /* ...остальной код без изменений... */
+
+// function getErrorMessage(e) {
+//   if (!e) return "Unknown error";
+//   if (typeof e === "string") return e;
+//   if (e.message) return e.message;
+//   if (e.text) return e.text;
+//   try {
+//     return JSON.stringify(e);
+//   } catch {
+//     return String(e);
+//   }
+// }
+
+// function tendersToRows(tenders) {
+//   if (!Array.isArray(tenders) || tenders.length === 0) {
+//     return `<tr><td colspan="4" style="text-align:center;">Ingen anbud å sende.</td></tr>`;
+//   }
+//   return tenders.map(t => `
+//     <tr>
+//       <td style="border: 1px solid #eaeaea; padding: 8px;">${t.publicationDate || ""}</td>
+//       <td style="border: 1px solid #eaeaea; padding: 8px;">${t.title || ""}</td>
+//       <td style="border: 1px solid #eaeaea; padding: 8px;">${t.buyer || ""}</td>
+//       <td style="border: 1px solid #eaeaea; padding: 8px;">
+//         ${t.link ? `<a href="${t.link}" target="_blank" rel="noopener noreferrer">Åpne</a>` : ""}
+//       </td>
+//     </tr>
+//   `).join("");
+// }
+
+// export async function getMapScreenshot(mapContainerId = "map-root") {
+//   const mapElement = document.getElementById(mapContainerId);
+//   if (!mapElement) {
+//     console.error(`[getMapScreenshot] Элемент с id "${mapContainerId}" не найден!`);
+//     throw new Error("Map element not found");
+//   }
+//   const canvas = await html2canvas(mapElement, { useCORS: true });
+//   const base64 = canvas.toDataURL("image/png");
+//   if (!base64 || typeof base64 !== "string") {
+//     console.error("[getMapScreenshot] Не удалось получить base64 из canvas!");
+//     throw new Error("Не удалось получить base64 скриншота карты");
+//   }
+//   return base64;
+// }
+
+// export async function uploadBase64ToImgurViaServerless(base64) {
+//   if (!base64 || typeof base64 !== "string" || !base64.startsWith("data:image/")) {
+//     console.error("[uploadBase64ToImgurViaServerless] base64 невалидный!", base64 ? base64.slice(0, 50) : base64);
+//     throw new Error("base64 должен быть строкой data:image/...");
+//   }
+//   const endpoint = "/.netlify/functions/uploadToImgur";
+//   const res = await fetch(endpoint, {
+//     method: "POST",
+//     headers: { "Content-Type": "application/json" },
+//     body: JSON.stringify({ image: base64 }),
+//   });
+//   const text = await res.text();
+//   let data;
+//   try {
+//     data = JSON.parse(text);
+//   } catch (e) {
+//     console.error('[uploadBase64ToImgurViaServerless] Не удалось распарсить JSON:', e, text);
+//     throw new Error("Некорректный ответ сервера imgur: " + text);
+//   }
+//   if (data.link) {
+//     console.log('[uploadBase64ToImgurViaServerless] Картинка успешно загружена на imgur:', data.link);
+//     return data.link;
+//   }
+//   console.error('[uploadBase64ToImgurViaServerless] Ошибка от Imgur:', data);
+//   throw new Error(data.error || data.details || "Unknown error");
+// }
+
+
+
+// // export async function sendTendersWithMapResend({
+// //   tenders,
+// //   mapUrl = "",
+// //   chunkNumber = 1,
+// //   chunkTotal = 1
+// // }) {
+// //   if (!Array.isArray(tenders)) {
+// //     throw new Error("tenders должен быть массивом");
+// //   }
+// //   if (typeof mapUrl !== "string") {
+// //     throw new Error("mapUrl должен быть строкой");
+// //   }
+
+// //   const html = `
+// //     <h2>Siste anbud og kart (automatisk utsending)</h2>
+// //     <p>Часть ${chunkNumber} из ${chunkTotal}</p>
+// //     <table style="border-collapse:collapse;width:100%;margin-bottom:16px;">
+// //       <thead>
+// //         <tr>
+// //           <th style="border:1px solid #eaeaea;padding:8px;">Dato</th>
+// //           <th style="border:1px solid #eaeaea;padding:8px;">Tittel</th>
+// //           <th style="border:1px solid #eaeaea;padding:8px;">Kjøper</th>
+// //           <th style="border:1px solid #eaeaea;padding:8px;">Lenke</th>
+// //         </tr>
+// //       </thead>
+// //       <tbody>
+// //         ${tendersToRows(tenders)}
+// //       </tbody>
+// //     </table>
+// //     ${mapUrl ? `<div><img src="${mapUrl}" alt="Kart" style="max-width:100%;border:1px solid #eaeaea;"/></div>` : ""}
+// //   `;
+
+// //   const toRaw = import.meta.env.VITE_TO_EMAIL;
+// //   const to = toRaw.includes(",")
+// //     ? toRaw.split(",").map(e => e.trim()).filter(Boolean)
+// //     : toRaw.trim();
+
+// //   const payload = {
+// //     to,
+// //     from: import.meta.env.VITE_FROM_EMAIL,
+// //     subject: "Siste anbud og kart (automatisk utsending)",
+// //     html
+// //   };
+
+// //   const endpoint = "/api/send-resend";
+
+// //   try {
+// //     console.log("[sendTendersWithMapResend] Отправка письма через Resend. Payload:", payload);
+// //     const res = await fetch(endpoint, {
+// //       method: "POST",
+// //       headers: { "Content-Type": "application/json" },
+// //       body: JSON.stringify(payload),
+// //     });
+// //     const text = await res.text();
+// //     let data;
+// //     try {
+// //       data = JSON.parse(text);
+// //     } catch {
+// //       data = text;
+// //     }
+// //     if (!res.ok) {
+// //       if (typeof data === "object") {
+// //         console.error("[sendTendersWithMapResend] Ошибка Resend:", data);
+// //         throw new Error(
+// //           "Ошибка Resend: " +
+// //           (data.error?.message || data.error || data.message || JSON.stringify(data))
+// //         );
+// //       }
+// //       throw new Error(data || "Unknown error from backend Resend proxy");
+// //     }
+// //     if (data.success) {
+// //       console.log("[sendTendersWithMapResend] Письмо успешно отправлено через Resend:", data);
+// //       return data;
+// //     }
+// //     throw new Error(
+// //       (typeof data === "object" && (data.error?.message || data.error || data.message)) ||
+// //       data ||
+// //       "Unknown error from backend Resend proxy"
+// //     );
+// //   } catch (e) {
+// //     const msg = getErrorMessage(e);
+// //     console.error("[sendTendersWithMapResend] Ошибка:", msg);
+// //     throw new Error("Ошибка при отправке email через Resend backend: " + msg);
+// //   }
+// // }
+
+
+
+
+
+
+// // export async function sendTendersWithMapWorkflow({
+// //   tenders,
+// //   mapContainerId = "map-root",
+// //   chunkNumber = 1,
+// //   chunkTotal = 1,
+// //   onStatus
+// // }) {
+// //   try {
+// //     if (!Array.isArray(tenders)) {
+// //       throw new Error("tenders должен быть массивом");
+// //     }
+// //     if (typeof mapContainerId !== "string") {
+// //       throw new Error("mapContainerId должен быть строкой");
+// //     }
+// //     if (onStatus && typeof onStatus !== "function") {
+// //       throw new Error("onStatus должен быть функцией");
+// //     }
+
+// //     if (onStatus) onStatus({ type: "info", message: "Делаю скриншот карты..." });
+// //     console.log("[sendTendersWithMapWorkflow] Делаю скриншот карты...");
+// //     const mapScreenshotBase64 = await getMapScreenshot(mapContainerId);
+// //     if (!mapScreenshotBase64 || typeof mapScreenshotBase64 !== "string") {
+// //       throw new Error("Не удалось получить скриншот карты");
+// //     }
+
+// //     if (onStatus) onStatus({ type: "info", message: "Загружаю карту на imgur..." });
+// //     console.log("[sendTendersWithMapWorkflow] Загружаю карту на imgur...");
+// //     const mapUrl = await uploadBase64ToImgurViaServerless(mapScreenshotBase64);
+// //     if (!mapUrl || typeof mapUrl !== "string" || !mapUrl.startsWith("http")) {
+// //       throw new Error("Ошибка загрузки карты на imgur");
+// //     }
+
+// //     console.log("[sendTendersWithMapWorkflow] ДАННЫЕ ДЛЯ EMAIL:");
+// //     console.log("tenders:", Array.isArray(tenders) ? tenders.map(t => ({
+// //       title: t.title,
+// //       publicationDate: t.publicationDate,
+// //       buyer: t.buyer,
+// //       link: t.link
+// //     })) : tenders);
+// //     console.log("mapUrl:", mapUrl);
+// //     console.log("chunkNumber:", chunkNumber, "chunkTotal:", chunkTotal);
+
+// //     if (onStatus) onStatus({ type: "info", message: "Отправляю email..." });
+// //     console.log("[sendTendersWithMapWorkflow] Отправляю email...");
+// //     const emailResult = await sendTendersWithMapResend({
+// //       tenders,
+// //       mapUrl,
+// //       chunkNumber,
+// //       chunkTotal
+// //     });
+
+// //     if (onStatus) onStatus({ type: "success", message: "Email успешно отправлен!" });
+// //     console.log("[sendTendersWithMapWorkflow] Email успешно отправлен!");
+// //     return emailResult;
+// //   } catch (e) {
+// //     const msg = getErrorMessage(e);
+// //     if (onStatus) onStatus({ type: "error", message: "Ошибка: " + msg });
+// //     console.error("[sendTendersWithMapWorkflow] Ошибка:", msg);
+// //     throw e;
+// //   }
+// // }
+
+// export async function sendTendersWithMapWorkflow({
+//   tenders,
+//   mapContainerId = "map-root",
+//   chunkNumber = 1,
+//   chunkTotal = 1,
+//   onStatus
+// }) {
+//   try {
+//     if (!Array.isArray(tenders)) {
+//       throw new Error("tenders должен быть массивом");
+//     }
+//     if (typeof mapContainerId !== "string") {
+//       throw new Error("mapContainerId должен быть строкой");
+//     }
+//     if (onStatus && typeof onStatus !== "function") {
+//       throw new Error("onStatus должен быть функцией");
+//     }
+
+//     if (onStatus) onStatus({ type: "info", message: "Делаю скриншот карты..." });
+//     console.log("[sendTendersWithMapWorkflow] Делаю скриншот карты...");
+//     const mapScreenshotBase64 = await getMapScreenshot(mapContainerId);
+//     if (!mapScreenshotBase64 || typeof mapScreenshotBase64 !== "string") {
+//       throw new Error("Не удалось получить скриншот карты");
+//     }
+
+//     if (onStatus) onStatus({ type: "info", message: "Загружаю карту на imgur..." });
+//     console.log("[sendTendersWithMapWorkflow] Загружаю карту на imgur...");
+//     const mapUrl = await uploadBase64ToImgurViaServerless(mapScreenshotBase64);
+//     if (!mapUrl || typeof mapUrl !== "string" || !mapUrl.startsWith("http")) {
+//       throw new Error("Ошибка загрузки карты на imgur");
+//     }
+
+//     console.log("[sendTendersWithMapWorkflow] ДАННЫЕ ДЛЯ EMAIL:");
+//     console.log("tenders:", Array.isArray(tenders) ? tenders.map(t => ({
+//       title: t.title,
+//       publicationDate: t.publicationDate,
+//       buyer: t.buyer,
+//       link: t.link
+//     })) : tenders);
+//     console.log("mapUrl:", mapUrl);
+//     console.log("chunkNumber:", chunkNumber, "chunkTotal:", chunkTotal);
+
+//     if (onStatus) onStatus({ type: "info", message: "Отправляю email..." });
+//     console.log("[sendTendersWithMapWorkflow] Отправляю email...");
+
+//     // Новый вызов через IPC (Electron)
+//     if (window.electronAPI && window.electronAPI.sendTendersWithMap) {
+//       await window.electronAPI.sendTendersWithMap({
+//         tenders,
+//         mapUrl,
+//         chunkNumber,
+//         chunkTotal
+//       });
+//     } else {
+//       throw new Error("IPC API для отправки email не найден. Проверьте preload.js и main process.");
+//     }
+
+//     if (onStatus) onStatus({ type: "success", message: "Email успешно отправлен!" });
+//     console.log("[sendTendersWithMapWorkflow] Email успешно отправлен!");
+//     return { success: true };
+//   } catch (e) {
+//     const msg = getErrorMessage(e);
+//     if (onStatus) onStatus({ type: "error", message: "Ошибка: " + msg });
+//     console.error("[sendTendersWithMapWorkflow] Ошибка:", msg);
+//     throw e;
+//   }
+// }
+
+
+
+
+// export async function getTenders() {
+//   const now = new Date();
+//   const osloNow = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Oslo' }));
+//   const toDate = osloNow.toISOString().slice(0, 10);
+//   const fromDateObj = new Date(osloNow.getTime() - 24 * 60 * 60 * 1000);
+//   const fromDate = fromDateObj.toISOString().slice(0, 10);
+
+//   const body = {
+//     from: fromDate,
+//     to: toDate,
+//     location: 'NO020%2CNO081%2CNO085%2CNO083%2CNO084',
+//     cpv: '45000000,45100000'
+//   };
+
+//   console.log("[getTenders] Запрос на запуск скрабинга doffin:", body);
+
+//   const res = await fetch('http://localhost:4003/api/notices/doffin-scrape', {
+//     method: 'POST',
+//     headers: { 'Content-Type': 'application/json' },
+//     body: JSON.stringify(body)
+//   });
+
+//   if (!res.ok) throw new Error('Ошибка запуска парсера doffin');
+//   const data = await res.json();
+//   console.log("[getTenders] Получено тендеров после скрабинга:", Array.isArray(data.results) ? data.results.length : typeof data.results);
+//   return data.results;
+// }
+
+// /**
+//  * Централизованная автоматическая проверка и отправка тендеров:
+//  * - В 15:00: обновляет данные (getTenders), обновляет компоненты через событие "TENDERS_UPDATED"
+//  * - В 15:01: отправляет email с актуальными тендерами (fetch cron_doffin_last.json), только после того как карта обновилась (ждём событие MAP_UPDATED)
+//  * Используйте только эту функцию для расписания!
+//  */
+// export function setupDailyTenderEmail(
+//   getTenders,
+//   mapContainerId = "map-root",
+//   onStatus,
+//   workflow = sendTendersWithMapWorkflow
+// ) {
+//   console.log("[setupDailyTenderEmail] Запуск таймера автоотправки (async getTenders)");
+//   let alreadyUpdatedToday = false;
+//   let alreadySentToday = false;
+
+//   // Слушаем событие MAP_UPDATED (UI должен диспатчить его после обновления карты)
+//   function waitForMapUpdated(timeoutMs = 15000) {
+//     return new Promise((resolve, reject) => {
+//       let timer = null;
+//       function handler(e) {
+//         window.removeEventListener("MAP_UPDATED", handler);
+//         if (timer) clearTimeout(timer);
+//         resolve(e && e.detail ? e.detail : null);
+//       }
+//       window.addEventListener("MAP_UPDATED", handler);
+//       timer = setTimeout(() => {
+//         window.removeEventListener("MAP_UPDATED", handler);
+//         reject(new Error("MAP_UPDATED timeout"));
+//       }, timeoutMs);
+//     });
+//   }
+
+//   const timer = setInterval(async () => {
+//     const now = new Date();
+//     const osloNow = new Date(now.toLocaleString("en-US", { timeZone: "Europe/Oslo" }));
+//     const hours = osloNow.getHours();
+//     const minutes = osloNow.getMinutes();
+//     console.log(`[setupDailyTenderEmail] Проверка времени: ${hours}:${minutes}, alreadyUpdatedToday: ${alreadyUpdatedToday}, alreadySentToday: ${alreadySentToday}`);
+
+//     // 1. В 15:00 — обновить данные и инициировать обновление компонентов
+//     if (hours === 15 && minutes === 0 && !alreadyUpdatedToday) {
+//       try {
+//         if (onStatus) onStatus({ type: "info", message: "Обновляю тендеры за сутки..." });
+//         console.log("[setupDailyTenderEmail] Вызов getTenders (async) для обновления данных...");
+//         const freshTenders = await getTenders();
+//         console.log("[setupDailyTenderEmail] Получено тендеров:", Array.isArray(freshTenders) ? freshTenders.length : typeof freshTenders);
+//         if (typeof window !== "undefined" && window.dispatchEvent) {
+//           window.dispatchEvent(new CustomEvent("TENDERS_UPDATED", { detail: freshTenders }));
+//         }
+//         alreadyUpdatedToday = true;
+//       } catch (e) {
+//         const msg = getErrorMessage(e);
+//         if (onStatus) onStatus({ type: "error", message: "Ошибка обновления тендеров: " + msg });
+//         console.error("[setupDailyTenderEmail] Ошибка обновления тендеров:", msg);
+//       }
+//     }
+
+//     // 2. В 15:01 — отправить письмо с актуальными тендерами (fetch cron_doffin_last.json), только после обновления карты
+//     if (hours === 15 && minutes === 1 && !alreadySentToday) {
+//       try {
+//         if (onStatus) onStatus({ type: "info", message: "Ждём обновления карты для e-post..." });
+//         try {
+//           await waitForMapUpdated(15000); // 15 секунд максимум
+//         } catch (e) {
+//           if (onStatus) onStatus({ type: "warning", message: "Карта не обновилась вовремя, отправляем как есть." });
+//         }
+//         // --- КЛЮЧЕВОЕ: fetch актуальные данные, как в ручной отправке ---
+//         let cronNotices = [];
+//         try {
+//           const resp = await fetch("http://localhost:4003/cron_doffin_last.json?t=" + Date.now(), { cache: "no-store" });
+//           const data = await resp.json();
+//           cronNotices = data.results || [];
+//         } catch (e) {
+//           if (onStatus) onStatus({ type: "error", message: "Не удалось получить актуальные тендеры: " + (e.message || e) });
+//           cronNotices = [];
+//         }
+//         // --- ВАЖНО: ПРОВЕРКА НА ПУСТОЙ МАССИВ ---
+//         if (!Array.isArray(cronNotices) || cronNotices.length === 0) {
+//           if (onStatus) onStatus({ type: "warning", message: "Нет тендеров для отправки — рассылка отменена." });
+//           console.warn("[setupDailyTenderEmail] Автоматическая отправка отменена: нет тендеров.");
+//           alreadySentToday = true;
+//           return;
+//         }
+//         if (onStatus) onStatus({ type: "info", message: "Отправляю e-post..." });
+//         await workflow({
+//           tenders: cronNotices,
+//           mapContainerId,
+//           chunkNumber: 1,
+//           chunkTotal: 1,
+//           onStatus
+//         });
+//         if (onStatus) onStatus({ type: "success", message: "E-posten ble sendt vellykket!" });
+//         alreadySentToday = true;
+//       } catch (e) {
+//         const msg = getErrorMessage(e);
+//         if (onStatus) onStatus({ type: "error", message: "Feil ved sending av e-post: " + msg });
+//         console.error("[setupDailyTenderEmail] Ошибка автоотправки:", msg);
+//       }
+//     }
+
+//     // Сброс флагов на следующий день
+//     if (hours !== 15 || (minutes !== 0 && minutes !== 1)) {
+//       alreadyUpdatedToday = false;
+//       alreadySentToday = false;
+//     }
+//   }, 60 * 1000);
+
+//   // Возвращаем функцию для остановки таймера (на случай размонтирования компонента)
+//   return () => {
+//     console.log("[setupDailyTenderEmail] Остановлен таймер автоотправки");
+//     clearInterval(timer);
+//   };
+// }
 
 
 // import html2canvas from "html2canvas";
