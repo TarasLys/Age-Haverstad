@@ -1,9 +1,17 @@
+
+
+
+
+
 import puppeteer from 'puppeteer';
 import express from 'express';
 import cors from 'cors';
 import cron from 'node-cron';
 import fs from 'fs';
 import path from 'path';
+
+console.log('Local time:', new Date().toString());
+console.log('Oslo time:', new Date().toLocaleString('en-US', { timeZone: 'Europe/Oslo' }));
 
 const app = express();
 const PORT = 4003;
@@ -48,15 +56,27 @@ cron.schedule('0 15 * * *', async () => {
 
     // CPV-коды и location по заданию
     const cpv = '45000000,45100000';
-    //const location = 'NO020%2CNO081';NO020%2CNO081%2CNO085%2CNO083%2CNO084
     const location = 'NO020%2CNO081%2CNO085%2CNO083%2CNO084';
     console.log(`[CRON] Запуск автоматического скрапинга Doffin за ${fromDate} - ${toDate} по CPV ${cpv} и location ${location}`);
 
     const filteredTenders = await scrapeDoffin({ from: fromDate, to: toDate, location, cpv });
 
+    // Логируем диапазон дат в тендерах
+    if (filteredTenders.length > 0) {
+      const dates = filteredTenders.map(t => t.publicationDate).filter(Boolean);
+      console.log(`[CRON] Даты публикаций в тендерах: ${[...new Set(dates)].join(', ')}`);
+    } else {
+      console.log('[CRON] Нет тендеров за указанный диапазон.');
+    }
+
     // Сохраняем результат в файл (например, server/cron_doffin_last.json)
     const filePath = path.join(serverDir, 'cron_doffin_last.json');
-    fs.writeFileSync(filePath, JSON.stringify({ date: new Date().toISOString(), results: filteredTenders }, null, 2), 'utf-8');
+    fs.writeFileSync(filePath, JSON.stringify({ 
+      date: new Date().toISOString(), 
+      from: fromDate, 
+      to: toDate, 
+      results: filteredTenders 
+    }, null, 2), 'utf-8');
     console.log(`[CRON] Сохранено ${filteredTenders.length} тендеров в ${filePath}`);
   } catch (error) {
     console.error('[CRON] Ошибка при автоматическом скрапинге:', error);
@@ -70,27 +90,19 @@ cron.schedule('0 15 * * *', async () => {
  * Возвращает массив тендеров.
  */
 async function scrapeDoffin({ from, to, location, cpv }) {
-  // Если регион не передан, используем стандартное значение
-  //const loc = location || 'NO020%2CNO081';
   const loc = location || 'NO020%2CNO081%2CNO085%2CNO083%2CNO084';
-
-  // Получаем CPV-коды из поля (например, "45000000,48000000")
   const cpvInput = cpv || '45000000';
   const cpvCodes = cpvInput.split(",").map(code => code.trim()).filter(Boolean);
 
-  // Запускаем браузер один раз
   const browser = await puppeteer.launch({ headless: false });
   let overallTenders = [];
 
-  // Для каждого CPV-кода выполняем запрос к базе
   for (const cpvCode of cpvCodes) {
     const page = await browser.newPage();
-    // Формируем базовый URL для текущего CPV-кода
     const baseUrl = `https://www.doffin.no/search?searchString=${encodeURIComponent(cpvCode)}&fromDate=${from}&toDate=${to}&location=${loc}`;
     let tenders = [];
     let pageNumber = 1;
 
-    // Функция автоскроллинга
     async function autoScroll(page) {
       await page.evaluate(async () => {
         await new Promise((resolve) => {
@@ -109,25 +121,20 @@ async function scrapeDoffin({ from, to, location, cpv }) {
       });
     }
 
-    // Функция извлечения тендеров со страницы (обновлены селекторы)
     async function extractTenders() {
       return await page.$$eval('li[data-cy]', items =>
         items.map(item => {
           const title = item.querySelector('h2._title_1boh3_26')?.textContent.trim();
           const description = item.querySelector('p._ingress_1boh3_33')?.textContent.trim();
-          // Извлекаем ссылку: теперь по классу "_card_1boh3_1"
           const noticeLinkElem = item.querySelector('a._card_1boh3_1');
           let link = null;
           if (noticeLinkElem) {
             const rawLink = noticeLinkElem.getAttribute('href');
             link = rawLink && rawLink.startsWith('/') ? `https://www.doffin.no${rawLink}` : rawLink;
           }
-          // Дата публикации
           const publicationDate = item.querySelector('p._issue_date_1kmak_20 font_')?.textContent.trim() ||
                                   item.querySelector('p._issue_date_1kmak_20')?.textContent.trim() || null;
-          // Покупатель
           const buyer = item.querySelector('p._buyer_1boh3_16')?.textContent.trim() || null;
-          // Тип и подтип объявления
           const chipElements = item.querySelectorAll('div._chipline_1hfyh_1 > p');
           let typeAnnouncement = null;
           let announcementSubtype = null;
@@ -137,19 +144,13 @@ async function scrapeDoffin({ from, to, location, cpv }) {
               announcementSubtype = chipElements[1].textContent.trim();
             }
           }
-          // Локация
           const location = item.querySelector('div._location_1kmak_18 > p')?.textContent.trim() || null;
-          // Оценочная стоимость
           const estValue = item.querySelector('p._est_value_1kmak_19')?.textContent.trim() || null;
-          // Дедлайн
           const deadline = item.querySelector('p._deadline_1kmak_21 font_')?.textContent.trim() ||
                            item.querySelector('p._deadline_1kmak_21')?.textContent.trim() || null;
-          // EØS
           const eoes = item.querySelector('abbr[title*="Kunngjort i EØS"]')?.getAttribute('title') || null;
-          // Статус
           const status = item.querySelector('span._status_1hfyh_40')?.textContent.trim() || null;
 
-          console.log("Найден тендер:", title, "Дата:", publicationDate, "Ссылка:", link);
           return { 
             title, 
             description, 
@@ -168,7 +169,6 @@ async function scrapeDoffin({ from, to, location, cpv }) {
       );
     }
 
-    // Цикл пагинации для текущего CPV-кода
     while (true) {
       const pageUrl = `${baseUrl}&page=${pageNumber}`;
       console.log(`Загрузка страницы ${pageNumber} для CPV ${cpvCode}: ${pageUrl}`);
@@ -201,7 +201,7 @@ async function scrapeDoffin({ from, to, location, cpv }) {
 
     overallTenders.push(...tenders);
     await page.close();
-  } // Конец перебора всех CPV-кодов
+  }
 
   await browser.close();
   console.log("Все извлеченные тендеры ДО фильтрации:", overallTenders);
@@ -216,7 +216,14 @@ async function scrapeDoffin({ from, to, location, cpv }) {
     return tenderDate >= new Date(from) && tenderDate <= new Date(to);
   });
 
-  console.log("Все тендеры после фильтрации:", filteredTenders);
+  // Логируем диапазон дат после фильтрации
+  if (filteredTenders.length > 0) {
+    const dates = filteredTenders.map(t => t.publicationDate).filter(Boolean);
+    console.log(`[scrapeDoffin] Даты публикаций после фильтрации: ${[...new Set(dates)].join(', ')}`);
+  } else {
+    console.log('[scrapeDoffin] Нет тендеров после фильтрации.');
+  }
+
   return filteredTenders;
 }
 
@@ -238,9 +245,270 @@ app.post('/api/notices/doffin-scrape', async (req, res) => {
   }
 });
 
+// Новый endpoint для ручной проверки содержимого cron_doffin_last.json
+app.get('/api/cron-dump', (req, res) => {
+  const filePath = path.join(serverDir, 'cron_doffin_last.json');
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'cron_doffin_last.json не найден' });
+  }
+  const data = fs.readFileSync(filePath, 'utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('application/json').send(data);
+});
+
 app.listen(PORT, () => {
   console.log(`Сервер запущен на http://localhost:${PORT}`);
 });
+
+
+
+// import puppeteer from 'puppeteer';
+// import express from 'express';
+// import cors from 'cors';
+// import cron from 'node-cron';
+// import fs from 'fs';
+// import path from 'path';
+
+// console.log('Local time:', new Date().toString());
+// console.log('Oslo time:', new Date().toLocaleString('en-US', { timeZone: 'Europe/Oslo' }));
+
+
+// const app = express();
+// const PORT = 4003;
+
+// // Для корректной работы __dirname в ES-модулях
+// const __dirname = path.resolve();
+
+// app.use(cors());
+// app.use(express.json());
+
+// // Раздаём cron_doffin_last.json статикой из папки server
+// const serverDir = path.resolve(__dirname, 'server');
+// app.use(express.static(serverDir));
+
+// // Диагностика времени
+// console.log('Local time:', new Date().toString());
+// console.log('Oslo time:', new Date().toLocaleString('en-US', { timeZone: 'Europe/Oslo' }));
+
+// // Тестовый cron каждую минуту с таймзоной
+// cron.schedule('* * * * *', () => {
+//   const now = new Date();
+//   const oslo = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Oslo' }));
+//   console.log(`[CRON-TEST] Каждая минута! Local: ${now.toISOString()} | Oslo: ${oslo.toISOString()}`);
+// }, { timezone: "Europe/Oslo" });
+
+// // Тестовый cron каждую минуту без таймзоны
+// cron.schedule('* * * * *', () => {
+//   console.log(`[CRON-TEST-NO-TZ] Каждая минута! Local: ${new Date().toISOString()}`);
+// });
+
+// // Ваш основной cron на 15:00 Oslo
+// cron.schedule('0 15 * * *', async () => {
+//   try {
+//     const now = new Date();
+//     const osloNow = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Oslo' }));
+//     console.log(`[CRON] Сработал cron! Local time: ${now.toString()}, Oslo time: ${osloNow.toString()}`);
+
+//     // Получаем даты за последние сутки
+//     const toDate = osloNow.toISOString().slice(0, 10);
+//     const fromDateObj = new Date(osloNow.getTime() - 24 * 60 * 60 * 1000);
+//     const fromDate = fromDateObj.toISOString().slice(0, 10);
+
+//     // CPV-коды и location по заданию
+//     const cpv = '45000000,45100000';
+//     //const location = 'NO020%2CNO081';NO020%2CNO081%2CNO085%2CNO083%2CNO084
+//     const location = 'NO020%2CNO081%2CNO085%2CNO083%2CNO084';
+//     console.log(`[CRON] Запуск автоматического скрапинга Doffin за ${fromDate} - ${toDate} по CPV ${cpv} и location ${location}`);
+
+//     const filteredTenders = await scrapeDoffin({ from: fromDate, to: toDate, location, cpv });
+
+//     // Сохраняем результат в файл (например, server/cron_doffin_last.json)
+//     const filePath = path.join(serverDir, 'cron_doffin_last.json');
+//     fs.writeFileSync(filePath, JSON.stringify({ date: new Date().toISOString(), results: filteredTenders }, null, 2), 'utf-8');
+//     console.log(`[CRON] Сохранено ${filteredTenders.length} тендеров в ${filePath}`);
+//   } catch (error) {
+//     console.error('[CRON] Ошибка при автоматическом скрапинге:', error);
+//   }
+// }, {
+//   timezone: "Europe/Oslo"
+// });
+
+// /**
+//  * Основная функция скрапинга, которую можно вызывать как из ручного запроса, так и из cron-задачи.
+//  * Возвращает массив тендеров.
+//  */
+// async function scrapeDoffin({ from, to, location, cpv }) {
+//   // Если регион не передан, используем стандартное значение
+//   //const loc = location || 'NO020%2CNO081';
+//   const loc = location || 'NO020%2CNO081%2CNO085%2CNO083%2CNO084';
+
+//   // Получаем CPV-коды из поля (например, "45000000,48000000")
+//   const cpvInput = cpv || '45000000';
+//   const cpvCodes = cpvInput.split(",").map(code => code.trim()).filter(Boolean);
+
+//   // Запускаем браузер один раз
+//   const browser = await puppeteer.launch({ headless: false });
+//   let overallTenders = [];
+
+//   // Для каждого CPV-кода выполняем запрос к базе
+//   for (const cpvCode of cpvCodes) {
+//     const page = await browser.newPage();
+//     // Формируем базовый URL для текущего CPV-кода
+//     const baseUrl = `https://www.doffin.no/search?searchString=${encodeURIComponent(cpvCode)}&fromDate=${from}&toDate=${to}&location=${loc}`;
+//     let tenders = [];
+//     let pageNumber = 1;
+
+//     // Функция автоскроллинга
+//     async function autoScroll(page) {
+//       await page.evaluate(async () => {
+//         await new Promise((resolve) => {
+//           let totalHeight = 0;
+//           const distance = 100;
+//           const timer = setInterval(() => {
+//             const scrollHeight = document.body.scrollHeight;
+//             window.scrollBy(0, distance);
+//             totalHeight += distance;
+//             if (totalHeight >= scrollHeight) {
+//               clearInterval(timer);
+//               resolve();
+//             }
+//           }, 200);
+//         });
+//       });
+//     }
+
+//     // Функция извлечения тендеров со страницы (обновлены селекторы)
+//     async function extractTenders() {
+//       return await page.$$eval('li[data-cy]', items =>
+//         items.map(item => {
+//           const title = item.querySelector('h2._title_1boh3_26')?.textContent.trim();
+//           const description = item.querySelector('p._ingress_1boh3_33')?.textContent.trim();
+//           // Извлекаем ссылку: теперь по классу "_card_1boh3_1"
+//           const noticeLinkElem = item.querySelector('a._card_1boh3_1');
+//           let link = null;
+//           if (noticeLinkElem) {
+//             const rawLink = noticeLinkElem.getAttribute('href');
+//             link = rawLink && rawLink.startsWith('/') ? `https://www.doffin.no${rawLink}` : rawLink;
+//           }
+//           // Дата публикации
+//           const publicationDate = item.querySelector('p._issue_date_1kmak_20 font_')?.textContent.trim() ||
+//                                   item.querySelector('p._issue_date_1kmak_20')?.textContent.trim() || null;
+//           // Покупатель
+//           const buyer = item.querySelector('p._buyer_1boh3_16')?.textContent.trim() || null;
+//           // Тип и подтип объявления
+//           const chipElements = item.querySelectorAll('div._chipline_1hfyh_1 > p');
+//           let typeAnnouncement = null;
+//           let announcementSubtype = null;
+//           if (chipElements.length > 0) {
+//             typeAnnouncement = chipElements[0].textContent.trim();
+//             if (chipElements.length > 1) {
+//               announcementSubtype = chipElements[1].textContent.trim();
+//             }
+//           }
+//           // Локация
+//           const location = item.querySelector('div._location_1kmak_18 > p')?.textContent.trim() || null;
+//           // Оценочная стоимость
+//           const estValue = item.querySelector('p._est_value_1kmak_19')?.textContent.trim() || null;
+//           // Дедлайн
+//           const deadline = item.querySelector('p._deadline_1kmak_21 font_')?.textContent.trim() ||
+//                            item.querySelector('p._deadline_1kmak_21')?.textContent.trim() || null;
+//           // EØS
+//           const eoes = item.querySelector('abbr[title*="Kunngjort i EØS"]')?.getAttribute('title') || null;
+//           // Статус
+//           const status = item.querySelector('span._status_1hfyh_40')?.textContent.trim() || null;
+
+//           console.log("Найден тендер:", title, "Дата:", publicationDate, "Ссылка:", link);
+//           return { 
+//             title, 
+//             description, 
+//             link, 
+//             publicationDate, 
+//             buyer, 
+//             typeAnnouncement, 
+//             announcementSubtype,
+//             location, 
+//             estValue,
+//             deadline,
+//             eoes,
+//             status
+//           };
+//         })
+//       );
+//     }
+
+//     // Цикл пагинации для текущего CPV-кода
+//     while (true) {
+//       const pageUrl = `${baseUrl}&page=${pageNumber}`;
+//       console.log(`Загрузка страницы ${pageNumber} для CPV ${cpvCode}: ${pageUrl}`);
+//       await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+
+//       if (pageNumber > 1 && !page.url().includes(`page=${pageNumber}`)) {
+//         console.log(`Ожидаемая страница ${pageNumber} не открылась для CPV ${cpvCode} (текущий URL: ${page.url()}). Завершаем цикл.`);
+//         break;
+//       }
+
+//       try {
+//         await page.waitForSelector('li[data-cy]', { timeout: 15000 });
+//       } catch {
+//         console.log(`На странице ${pageNumber} для CPV ${cpvCode} нужный селектор не найден. Данные, видимо, закончились.`);
+//         break;
+//       }
+
+//       await autoScroll(page);
+//       const newTenders = await extractTenders();
+//       console.log(`Найдено тендеров на странице ${pageNumber} для CPV ${cpvCode}: ${newTenders.length}`);
+
+//       if (newTenders.length === 0) {
+//         console.log("На текущей странице данных больше нет, завершаем цикл пагинации для CPV", cpvCode);
+//         break;
+//       }
+
+//       tenders.push(...newTenders);
+//       pageNumber++;
+//     }
+
+//     overallTenders.push(...tenders);
+//     await page.close();
+//   } // Конец перебора всех CPV-кодов
+
+//   await browser.close();
+//   console.log("Все извлеченные тендеры ДО фильтрации:", overallTenders);
+
+//   // Фильтрация тендеров по диапазону дат (в случае, если сайт возвращает записи вне указанного диапазона)
+//   const filteredTenders = overallTenders.filter(tender => {
+//     if (!tender.publicationDate) return false;
+//     const parts = tender.publicationDate.split('.');
+//     if (parts.length !== 3) return false;
+//     const formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+//     const tenderDate = new Date(formattedDate);
+//     return tenderDate >= new Date(from) && tenderDate <= new Date(to);
+//   });
+
+//   console.log("Все тендеры после фильтрации:", filteredTenders);
+//   return filteredTenders;
+// }
+
+// // Ручной POST-запрос (старая логика не изменяется)
+// app.post('/api/notices/doffin-scrape', async (req, res) => {
+//   const { from, to, location, cpv } = req.body;
+
+//   if (!from || !to) {
+//     return res.status(400).json({ error: 'Поля "from" и "to" обязательны для заполнения.' });
+//   }
+
+//   try {
+//     const filteredTenders = await scrapeDoffin({ from, to, location, cpv });
+//     res.setHeader('Cache-Control', 'no-store');
+//     res.status(200).json({ results: filteredTenders });
+//   } catch (error) {
+//     console.error('Ошибка при скрапинге данных:', error);
+//     res.status(500).json({ error: 'Ошибка при скрапинге данных.' });
+//   }
+// });
+
+// app.listen(PORT, () => {
+//   console.log(`Сервер запущен на http://localhost:${PORT}`);
+// });
 
 // До отображания данных в фронте для пользователя
 // import puppeteer from 'puppeteer';

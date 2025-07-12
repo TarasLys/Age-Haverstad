@@ -3,9 +3,9 @@ import MapComponent from "./MapComponent";
 import DynamicListComponent from "./DynamicListComponent";
 import {
   setupDailyTenderEmail,
-} from "../utils/sendTendersWithMapEmailjs";
-import { sendTendersWithMapWorkflow } from "../utils/sendTendersWithMapEmailjs";
-
+} from "../utils/sendTendersWithMapEmailjs.js";
+import { sendTendersWithMapWorkflow } from "../utils/sendTendersWithMapEmailjs.js";
+//import { sendTendersWithMapWorkflowAdapted } from "../utils/sendTendersWithMapEmailjs.js";
 /**
  * Компонент для отображения статуса отправки email
  */
@@ -93,20 +93,28 @@ const TenderDashboard = () => {
     }
   };
 
-  const handleManualEmailSend = async () => {
-    try {
-      await sendTendersWithMapWorkflow({
-        tenders: cronNotices,
-        mapContainerId: "map-root",
-        chunkNumber: 1,
-        chunkTotal: 1,
-        onStatus: setEmailStatus
-      });
-    } catch {
-      // Ошибка уже обработана через onStatus
-    }
-  };
 
+const handleManualEmailSend = async () => {
+  console.log("[TenderDashboard] Кнопка ручной отправки email нажата");
+  console.log("[TenderDashboard] cronNotices:", cronNotices);
+  
+  try {
+    await sendTendersWithMapWorkflow({
+      tenders: cronNotices,
+      mapContainerId: "map-root",
+      chunkNumber: 1,
+      chunkTotal: 1,
+      onStatus: (status) => {
+        console.log("[TenderDashboard] onStatus:", status);
+        setEmailStatus(status);
+      }
+    });
+    console.log("[TenderDashboard] sendTendersWithMapWorkflow завершён без ошибок");
+  } catch (e) {
+    console.error("[TenderDashboard] Ошибка в handleManualEmailSend:", e);
+    // Ошибка уже обработана через onStatus
+  }
+};
   return (
     <div style={{ display: "flex", height: "100vh" }}>
       <div style={{ flex: 1, overflowY: "auto" }}>
